@@ -25,6 +25,8 @@ import {
 /** @type {import('@volar/vue-language-core').VueLanguagePlugin} */
 const plugin = () => {
 	return {
+		name: 'example-vue-language-plugin',
+		version: 1,
 		resolveEmbeddedFile(fileName, sfc, embeddedFile) {
 			if (embeddedFile.fileName.replace(fileName, '').match(/^\.(js|ts|jsx|tsx)$/)) {
 
