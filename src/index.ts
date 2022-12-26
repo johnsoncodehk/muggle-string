@@ -37,17 +37,34 @@ export function create(source: string): Segment[] {
 	return [[source, undefined, 0]];
 }
 
-export function replace<T extends Segment<any>>(segments: T[], pattern: string | RegExp, replacer: string | ((match: string) => T)) {
+export function replace<T extends Segment<any>>(segments: T[], pattern: string | RegExp, ...replacers: (string | ((match: string) => T))[]) {
 	const str = toString(segments);
 	const match = str.match(pattern);
 	if (match && match.index !== undefined) {
 		const startOffset = match.index;
 		const endOffset = startOffset + match[0].length;
-		update(segments, startOffset, endOffset, typeof replacer === 'string' ? replacer : replacer(match[0]));
+		replaceRange(segments, startOffset, endOffset, ...replacers.map(replacer => typeof replacer === 'string' ? replacer : replacer(match[0])));
 	}
 }
 
-export function update<T extends Segment<any>>(segments: T[], startOffset: number, endOffset: number, newSegment: T) {
+export function replaceAll<T extends Segment<any>>(segments: T[], pattern: RegExp, ...replacers: (string | ((match: string) => T))[]) {
+	const str = toString(segments);
+	const allMatch = str.matchAll(pattern);
+	let length = str.length;
+	let lengthDiff = 0;
+	for (const match of allMatch) {
+		if (match.index !== undefined) {
+			const startOffset = match.index + lengthDiff;
+			const endOffset = startOffset + match[0].length;
+			replaceRange(segments, startOffset, endOffset, ...replacers.map(replacer => typeof replacer === 'string' ? replacer : replacer(match[0])));
+			const newLength = getLength(segments);
+			lengthDiff += newLength - length;
+			length = newLength;
+		}
+	}
+}
+
+export function replaceRange<T extends Segment<any>>(segments: T[], startOffset: number, endOffset: number, ...newSegments: T[]) {
 	const offsets = toOffsets(segments);
 	const startIndex = binarySearch(offsets, startOffset);
 	const endIndex = binarySearch(offsets, endOffset);
@@ -60,7 +77,9 @@ export function update<T extends Segment<any>>(segments: T[], startOffset: numbe
 	if (startOffset > startSegmentStart) {
 		inserts.push(trimSegmentEnd(startSegment, startOffset - startSegmentStart));
 	}
-	inserts.push(newSegment);
+	for (const newSegment of newSegments) {
+		inserts.push(newSegment);
+	}
 	if (endOffset < endSegmentEnd) {
 		inserts.push(trimSegmentStart(endSegment, endOffset - endSegmentStart));
 	}
