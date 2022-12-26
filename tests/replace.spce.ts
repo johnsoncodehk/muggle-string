@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { replace, toString, Segment } from '../';
+import { replace, toString, Segment } from '../out';
 
-describe('Readme Example', async () => {
+describe('replace', async () => {
 
 	it(`problems = 99 -> var answer = 42;`, async () => {
 

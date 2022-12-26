@@ -1,3 +1,5 @@
+import { binarySearch } from "./binarySearch";
+
 const NO_DATA_SYMBOL: unique symbol = Symbol();
 
 export type Segment<T = typeof NO_DATA_SYMBOL> = T extends typeof NO_DATA_SYMBOL ? SegmentWithoutData : SegmentWithData<T>;
@@ -31,6 +33,10 @@ export function toString<T extends Segment<any>>(segments: T[]) {
 	return segments.map(s => typeof s === 'string' ? s : s[0]).join('');
 }
 
+export function create(source: string): Segment[] {
+	return [[source, undefined, 0]];
+}
+
 export function replace<T extends Segment<any>>(segments: T[], pattern: string | RegExp, replacer: string | ((match: string) => T)) {
 	const str = toString(segments);
 	const match = str.match(pattern);
@@ -43,11 +49,12 @@ export function replace<T extends Segment<any>>(segments: T[], pattern: string |
 
 export function update<T extends Segment<any>>(segments: T[], startOffset: number, endOffset: number, newSegment: T) {
 	const offsets = toOffsets(segments);
-	const startIndex = binarySearchStartIndex(offsets, startOffset);
-	const endIndex = binarySearchEndIndex(offsets, endOffset);
+	const startIndex = binarySearch(offsets, startOffset);
+	const endIndex = binarySearch(offsets, endOffset);
 	const startSegment = segments[startIndex];
 	const endSegment = segments[endIndex];
 	const startSegmentStart = offsets[startIndex];
+	const endSegmentStart = offsets[endIndex];
 	const endSegmentEnd = offsets[endIndex] + (typeof endSegment === 'string' ? endSegment.length : endSegment[0].length);
 	const inserts: T[] = [];
 	if (startOffset > startSegmentStart) {
@@ -55,7 +62,7 @@ export function update<T extends Segment<any>>(segments: T[], startOffset: numbe
 	}
 	inserts.push(newSegment);
 	if (endOffset < endSegmentEnd) {
-		inserts.push(trimSegmentStart(endSegment, endOffset - startSegmentStart));
+		inserts.push(trimSegmentStart(endSegment, endOffset - endSegmentStart));
 	}
 	combineStrings(inserts);
 	segments.splice(startIndex, endIndex - startIndex + 1, ...inserts);
@@ -110,32 +117,4 @@ function toOffsets(segments: Segment<any>[]) {
 		offset += typeof segment == 'string' ? segment.length : segment[0].length;
 	}
 	return offsets;
-}
-
-function binarySearchStartIndex(offsets: number[], searchOffset: number) {
-	let start = 0;
-	let end = offsets.length - 1;
-	while (start < end) {
-		const mid = Math.floor((start + end) / 2);
-		if (offsets[mid] < searchOffset) {
-			start = mid + 1;
-		} else {
-			end = mid;
-		}
-	}
-	return start;
-}
-
-function binarySearchEndIndex(offsets: number[], searchOffset: number) {
-	let start = 0;
-	let end = offsets.length - 1;
-	while (start < end) {
-		const mid = Math.floor((start + end) / 2);
-		if (offsets[mid] <= searchOffset) {
-			start = mid + 1;
-		} else {
-			end = mid;
-		}
-	}
-	return start;
 }
