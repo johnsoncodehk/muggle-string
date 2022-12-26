@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { replace, create, replaceRange, toString, Segment } from '../';
+import { replace, create, replaceRange, toString, Segment } from '../out';
 
 describe('replace', async () => {
 

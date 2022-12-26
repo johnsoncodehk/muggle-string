@@ -64,6 +64,34 @@ export function replaceAll<T extends Segment<any>>(segments: T[], pattern: RegEx
 	}
 }
 
+export function replaceSourceRange<T extends Segment<any>>(segments: T[], source: string | undefined, startOffset: number, endOffset: number, ...newSegments: T[]) {
+	for (const segment of segments) {
+		if (typeof segment === 'string') {
+			continue;
+		}
+		if (segment[1] === source) {
+			const segmentStart = typeof segment[2] === 'number' ? segment[2] : segment[2][0];
+			const segmentEnd = typeof segment[2] === 'number' ? segment[2] + segment[0].length : segment[2][1];
+			if (segmentStart <= startOffset && segmentEnd >= endOffset) {
+				const inserts: T[] = [];
+				if (startOffset > segmentStart) {
+					inserts.push(trimSegmentEnd(segment, startOffset - segmentStart));
+				}
+				for (const newSegment of newSegments) {
+					inserts.push(newSegment);
+				}
+				if (endOffset < segmentEnd) {
+					inserts.push(trimSegmentStart(segment, endOffset - segmentEnd));
+				}
+				combineStrings(inserts);
+				segments.splice(segments.indexOf(segment), 1, ...inserts);
+				return;
+			}
+		}
+	}
+	throw new Error(`Source range not found: ${source} ${startOffset} ${endOffset}`);
+}
+
 export function replaceRange<T extends Segment<any>>(segments: T[], startOffset: number, endOffset: number, ...newSegments: T[]) {
 	const offsets = toOffsets(segments);
 	const startIndex = binarySearch(offsets, startOffset);
@@ -119,6 +147,9 @@ function trimSegmentStart<T extends Segment<any>>(segment: T, trimStart: number)
 	const originalString = segment[0];
 	const originalRange = segment[2];
 	const newString = originalString.slice(trimStart);
+	if (trimStart < 0) {
+		trimStart += originalString.length;
+	}
 	const newRange = typeof originalRange === 'number' ? originalRange + trimStart : [originalRange[0] + trimStart, originalRange[1]];
 	return [
 		newString,
