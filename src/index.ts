@@ -85,11 +85,11 @@ export function replaceSourceRange<T extends Segment<any>>(segments: T[], source
 				}
 				combineStrings(inserts);
 				segments.splice(segments.indexOf(segment), 1, ...inserts);
-				return;
+				return true;
 			}
 		}
 	}
-	throw new Error(`Source range not found: ${source} ${startOffset} ${endOffset}`);
+	return false;
 }
 
 export function replaceRange<T extends Segment<any>>(segments: T[], startOffset: number, endOffset: number, ...newSegments: T[]) {
