@@ -2,24 +2,15 @@ import { binarySearch } from "./binarySearch";
 
 const NO_DATA_SYMBOL: unique symbol = Symbol();
 
-export type Segment<T = typeof NO_DATA_SYMBOL> = T extends typeof NO_DATA_SYMBOL ? SegmentWithoutData : SegmentWithData<T>;
-export type SegmentWithoutData = WithString<_SegmentWithoutData>;
-export type SegmentWithData<T = any> = WithString<_SegmentWithData<T>>;
+export type Segment<T = typeof NO_DATA_SYMBOL> = WithString<
+	T extends typeof NO_DATA_SYMBOL ?
+	// text, source, source range / offset
+	[string, string | undefined, number | [number, number]] :
+	// text, source, source range / offset, data
+	[string, string | undefined, number | [number, number], T]
+>;
 
 type WithString<T> = T | string;
-
-type _SegmentWithoutData = [
-	string, // text
-	string | undefined, // source
-	number | [number, number], // source offset
-];
-
-type _SegmentWithData<T = any> = [
-	string, // text
-	string | undefined, // source
-	number | [number, number], // source offset
-	T, // data
-];
 
 export function getLength(segments: Segment<any>[]) {
 	let length = 0;
