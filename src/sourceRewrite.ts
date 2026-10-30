@@ -373,7 +373,6 @@ function getOrder(options: InsertOptions | undefined) {
 }
 
 class Cut<Source, Data> implements RewriteSlice<Source, Data> {
-	declare readonly isSlice: true;
 	/** The cuts directly inside, sorted and disjoint. */
 	children: Cut<Source, Data>[] | undefined;
 	isRoot = false;
@@ -392,7 +391,6 @@ class Cut<Source, Data> implements RewriteSlice<Source, Data> {
 		renderCut(this, new Walker(this.rewrite, sink));
 	}
 }
-(Cut.prototype as { isSlice: true }).isSlice = true;
 
 /** The state of one render: the sink, and the position in the text and in the removals. */
 class Walker<Source, Data> {
@@ -563,7 +561,7 @@ function renderCode<Source, Data>(code: RewriteCode<Source, Data>, walker: Walke
 			renderCode(code[index]!, walker);
 		}
 	}
-	else if ((code as Cut<Source, Data>).isSlice) {
+	else if (isSlice(code)) {
 		renderCut(code as Cut<Source, Data>, walker);
 	}
 	else {
@@ -574,4 +572,8 @@ function renderCode<Source, Data>(code: RewriteCode<Source, Data>, walker: Walke
 
 function isCodeArray<Source, Data>(code: RewriteCode<Source, Data>): code is readonly RewriteCode<Source, Data>[] {
 	return Array.isArray(code);
+}
+
+function isSlice<Source, Data>(code: RewriteCode<Source, Data>): code is RewriteSlice<Source, Data> {
+	return typeof (code as RewriteSlice<Source, Data>).render === 'function';
 }
