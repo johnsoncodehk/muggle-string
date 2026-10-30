@@ -40,9 +40,17 @@ export interface RewriteWriter<Source, Data> {
 	cut(start: number, end: number, options: CutOptions<Source, Data>): RewriteSlice<Source, Data>;
 }
 
+/** Receives the pieces of a render, in order: the same two shapes as `Piece`, as arguments. */
+export interface PieceSink<Source, Data> {
+	/** New text, not empty, which maps nowhere. */
+	text(text: string): void;
+	/** The range `start`..`end` of the text of `source`. `text` is undefined for kept text, which copies the range. */
+	range(source: Source, start: number, end: number, data: Data, text: string | undefined): void;
+}
+
 export interface RewriteSlice<Source, Data> {
-	/** Appends the pieces of the slice to `out`, and returns `out`. A kept piece has no `text`. */
-	pieces(out?: Piece<Source, Data>[]): Piece<Source, Data>[];
+	/** Renders the pieces of the slice into `sink`, in order. */
+	render(sink: PieceSink<Source, Data>): void;
 }
 
 /**
@@ -71,69 +79,35 @@ const enum Side {
 	After,
 }
 
-interface EditRecord<Source, Data> {
-	at: number;
-	side: Side;
-	rank: number;
-	order: number;
-	seq: number;
-	code: RewriteCode<Source, Data>;
-}
-
-// Before: outermost (highest rank) first; Slot and After: innermost first
-function compareEdits<Source, Data>(a: EditRecord<Source, Data>, b: EditRecord<Source, Data>) {
-	if (a.at !== b.at) {
-		return a.at - b.at;
-	}
-	if (a.side !== b.side) {
-		return a.side - b.side;
-	}
-	if (a.rank !== b.rank) {
-		return a.side === Side.Before ? b.rank - a.rank : a.rank - b.rank;
-	}
-	if (a.order !== b.order) {
-		return a.order < b.order ? -1 : 1;
-	}
-	return a.seq - b.seq;
-}
-
+/**
+ * Edits by column. An edit is anchored at a side of a char; `insertAfter(0)` anchors before the char -1, so it renders
+ * before all text, and `insertBefore(length)` after the char `length`, so it renders after all text.
+ */
 class Edits<Source, Data> {
-	records: EditRecord<Source, Data>[] = [];
-	// the sorted records by column, filled when frozen
-	at = new Int32Array(0);
-	side = new Uint8Array(0);
+	size = 0;
+	at = new Int32Array(16);
+	side = new Uint8Array(16);
 	code: RewriteCode<Source, Data>[] = [];
 
-	push(at: number, side: Side, rank: number, order: number, code: RewriteCode<Source, Data>) {
-		this.records.push({ at, side, rank, order, seq: this.records.length, code });
-	}
-
-	freeze() {
-		const records = this.records;
-		// every writer's edits usually arrive in order; the sort is linear on such runs
-		for (let i = 1; i < records.length; i++) {
-			if (compareEdits(records[i - 1]!, records[i]!) > 0) {
-				records.sort(compareEdits);
-				break;
-			}
+	push(at: number, side: Side, code: RewriteCode<Source, Data>) {
+		const index = this.size++;
+		if (index === this.at.length) {
+			const at = new Int32Array(index * 2);
+			at.set(this.at);
+			this.at = at;
+			const side = new Uint8Array(index * 2);
+			side.set(this.side);
+			this.side = side;
 		}
-		const size = records.length;
-		this.at = new Int32Array(size);
-		this.side = new Uint8Array(size);
-		this.code = new Array(size);
-		for (let i = 0; i < size; i++) {
-			const record = records[i]!;
-			this.at[i] = record.at;
-			this.side[i] = record.side;
-			this.code[i] = record.code;
-		}
-		this.records = [];
+		this.at[index] = at;
+		this.side[index] = side;
+		this.code.push(code);
 	}
 
 	/** The first index from `low` whose anchor is at or after `offset`. */
 	lowerBound(offset: number, low: number) {
 		const at = this.at;
-		let high = at.length;
+		let high = this.size;
 		while (low < high) {
 			const mid = (low + high) >>> 1;
 			if (at[mid]! < offset) {
@@ -147,17 +121,71 @@ class Edits<Source, Data> {
 	}
 }
 
+/** The edits of one writer, in call order, which is the order of equal keys; its rank is the same for all. */
+class WriterEdits<Source, Data> extends Edits<Source, Data> {
+	/** The orders that are not 0, by edit. */
+	orders: Map<number, number> | undefined;
+
+	constructor(readonly rank: number) {
+		super();
+	}
+
+	add(at: number, side: Side, order: number, code: RewriteCode<Source, Data>) {
+		if (order !== 0) {
+			(this.orders ??= new Map()).set(this.size, order);
+		}
+		this.push(at, side, code);
+	}
+
+	compare(a: number, b: number) {
+		const { at, side } = this;
+		if (at[a] !== at[b]) {
+			return at[a]! - at[b]!;
+		}
+		if (side[a] !== side[b]) {
+			return side[a]! - side[b]!;
+		}
+		const orderA = this.orders?.get(a) ?? 0;
+		const orderB = this.orders?.get(b) ?? 0;
+		return orderA !== orderB ? (orderA < orderB ? -1 : 1) : a - b;
+	}
+
+	/** Sorts the edits, which usually arrive in order. */
+	sort() {
+		const size = this.size;
+		let index = 1;
+		while (index < size && this.compare(index - 1, index) < 0) {
+			index++;
+		}
+		if (index >= size) {
+			return;
+		}
+		const sorted = Array.from({ length: size }, (_, index) => index).sort((a, b) => this.compare(a, b));
+		const at = new Int32Array(size);
+		const side = new Uint8Array(size);
+		const code = new Array<RewriteCode<Source, Data>>(size);
+		for (let index = 0; index < size; index++) {
+			const from = sorted[index]!;
+			at[index] = this.at[from]!;
+			side[index] = this.side[from]!;
+			code[index] = this.code[from]!;
+		}
+		this.at = at;
+		this.side = side;
+		this.code = code;
+		this.orders = undefined;
+	}
+}
+
 class Rewrite<Source, Data> implements SourceRewrite<Source, Data> {
 	readonly core: RewriteWriter<Source, Data>;
-	edits = new Edits<Source, Data>();
-	/** `insertAfter(0)`: before all text. */
-	head = new Edits<Source, Data>();
-	/** `insertBefore(length)`: after all text. */
-	tail = new Edits<Source, Data>();
-	/** Removed ranges as flat start, end pairs. */
-	removalPairs: number[] = [];
-	/** The removed ranges, sorted and merged, filled when frozen. */
-	removals = new Int32Array(0);
+	writers = new Map<number, RewriteWriter<Source, Data>>();
+	writerEdits: WriterEdits<Source, Data>[] = [];
+	/** The edits of all writers, sorted, filled when frozen. */
+	edits: Edits<Source, Data> = new Edits();
+	/** Removed ranges as flat start, end pairs; sorted and merged when frozen. */
+	removals = new Int32Array(16);
+	removalsSize = 0;
 	/** The top-level cuts, sorted and disjoint. */
 	roots: Cut<Source, Data>[] = [];
 	/** The last inserted cut, where the descent of the next one starts if it contains it. */
@@ -174,38 +202,32 @@ class Rewrite<Source, Data> implements SourceRewrite<Source, Data> {
 		if (!Number.isInteger(rank) || rank < 0 || rank >= coreRank) {
 			throw new RangeError(`The rank ${rank} is not a non-negative integer below the rank of core.`);
 		}
-		return this.createWriter(rank);
+		let writer = this.writers.get(rank);
+		if (!writer) {
+			this.writers.set(rank, writer = this.createWriter(rank));
+		}
+		return writer;
 	}
 
 	private createWriter(rank: number): RewriteWriter<Source, Data> {
+		const edits = new WriterEdits<Source, Data>(rank);
+		this.writerEdits.push(edits);
 		return {
 			insertBefore: (offset, code, options) => {
 				this.check(offset, offset);
-				const order = getOrder(options);
-				if (offset === this.text.length) {
-					this.tail.push(offset, Side.After, rank, order, code);
-				}
-				else {
-					this.edits.push(offset, Side.Before, rank, order, code);
-				}
+				edits.add(offset, offset === this.text.length ? Side.After : Side.Before, getOrder(options), code);
 			},
 			insertAfter: (offset, code, options) => {
 				this.check(offset, offset);
-				const order = getOrder(options);
-				if (offset === 0) {
-					this.head.push(0, Side.Before, rank, order, code);
-				}
-				else {
-					this.edits.push(offset - 1, Side.After, rank, order, code);
-				}
+				edits.add(offset ? offset - 1 : -1, offset ? Side.After : Side.Before, getOrder(options), code);
 			},
 			replace: (start, end, code, options) => {
 				this.check(start, end);
 				if (start === end) {
 					throw new RangeError(`The replace at ${start}..${end} removes no char.`);
 				}
-				this.edits.push(start, Side.Slot, rank, getOrder(options), code);
-				this.removalPairs.push(start, end);
+				edits.add(start, Side.Slot, getOrder(options), code);
+				this.addRemoval(start, end);
 			},
 			cut: (start, end, { data, placeholder }) => {
 				this.check(start, end);
@@ -235,12 +257,24 @@ class Rewrite<Source, Data> implements SourceRewrite<Source, Data> {
 		}
 	}
 
+	private addRemoval(start: number, end: number) {
+		const size = this.removalsSize;
+		if (size === this.removals.length) {
+			const removals = new Int32Array(size * 2);
+			removals.set(this.removals);
+			this.removals = removals;
+		}
+		this.removals[size] = start;
+		this.removals[size + 1] = end;
+		this.removalsSize = size + 2;
+	}
+
 	// A cut that crosses `cut` intersects it, so it lies inside every cut that contains `cut`: the descent only checks
 	// the siblings that `cut` intersects, of the innermost cut that contains it.
 	private insertCut(cut: Cut<Source, Data>) {
 		const { start, end } = cut;
 		const last = this.lastCut;
-		let siblings = last && last.start <= start && end <= last.end ? last.children : this.roots;
+		let siblings = last && last.start <= start && end <= last.end ? (last.children ??= []) : this.roots;
 		while (true) {
 			let first = 0;
 			let after = siblings.length;
@@ -263,7 +297,7 @@ class Rewrite<Source, Data> implements SourceRewrite<Source, Data> {
 				}
 			}
 			if (after - first === 1 && siblings[first]!.start <= start && end <= siblings[first]!.end) {
-				siblings = siblings[first]!.children;
+				siblings = siblings[first]!.children ??= [];
 				continue;
 			}
 			if (after > first) {
@@ -290,19 +324,27 @@ class Rewrite<Source, Data> implements SourceRewrite<Source, Data> {
 			return;
 		}
 		this.frozen = true;
-		this.edits.freeze();
-		this.head.freeze();
-		this.tail.freeze();
-		const removals = this.removalPairs;
-		const pairs = removals.length >> 1;
+		this.edits = mergeWriters(this.writerEdits.filter(edits => edits.size));
+		this.writerEdits = [];
+		this.mergeRemovals();
+		for (const root of this.roots) {
+			root.isRoot = true;
+		}
+	}
+
+	private mergeRemovals() {
+		let removals = this.removals;
+		const pairs = this.removalsSize >> 1;
 		for (let pair = 1; pair < pairs; pair++) {
 			if (removals[2 * pair - 2]! > removals[2 * pair]!) {
-				const sorted = Array.from({ length: pairs }, (_, index) => [removals[2 * index]!, removals[2 * index + 1]!])
-					.sort((a, b) => a[0]! - b[0]!);
+				const sorted = Array.from({ length: pairs }, (_, index) => index)
+					.sort((a, b) => removals[2 * a]! - removals[2 * b]!);
+				const copy = new Int32Array(2 * pairs);
 				for (let index = 0; index < pairs; index++) {
-					removals[2 * index] = sorted[index]![0]!;
-					removals[2 * index + 1] = sorted[index]![1]!;
+					copy[2 * index] = removals[2 * sorted[index]!]!;
+					copy[2 * index + 1] = removals[2 * sorted[index]! + 1]!;
 				}
+				removals = copy;
 				break;
 			}
 		}
@@ -320,13 +362,58 @@ class Rewrite<Source, Data> implements SourceRewrite<Source, Data> {
 				removals[merged++] = end;
 			}
 		}
-		removals.length = merged;
-		this.removals = Int32Array.from(removals);
-		this.removalPairs = [];
-		for (const root of this.roots) {
-			root.isRoot = true;
-		}
+		this.removals = removals;
+		this.removalsSize = merged;
 	}
+}
+
+/**
+ * The edits of all writers in render order. At one side of one char, the code before the text goes outermost (highest
+ * rank) first, and the code in the place of the char and after the text innermost first.
+ */
+function mergeWriters<Source, Data>(writers: WriterEdits<Source, Data>[]): Edits<Source, Data> {
+	for (const writer of writers) {
+		writer.sort();
+	}
+	if (writers.length <= 1) {
+		return writers[0] ?? new Edits();
+	}
+	const merged = new Edits<Source, Data>();
+	const size = writers.reduce((size, writer) => size + writer.size, 0);
+	merged.at = new Int32Array(size);
+	merged.side = new Uint8Array(size);
+	merged.code = new Array(size);
+	merged.size = size;
+	const next = new Array<number>(writers.length).fill(0);
+	for (let index = 0; index < size; index++) {
+		let best = -1;
+		let bestAt = 0;
+		let bestSide = 0;
+		for (let writer = 0; writer < writers.length; writer++) {
+			const edit = next[writer]!;
+			const edits = writers[writer]!;
+			if (edit === edits.size) {
+				continue;
+			}
+			const at = edits.at[edit]!;
+			const side = edits.side[edit]!;
+			if (
+				best === -1 || at < bestAt || (at === bestAt && (side < bestSide || (side === bestSide && (
+					side === Side.Before ? edits.rank > writers[best]!.rank : edits.rank < writers[best]!.rank
+				))))
+			) {
+				best = writer;
+				bestAt = at;
+				bestSide = side;
+			}
+		}
+		const edits = writers[best]!;
+		const edit = next[best]!++;
+		merged.at[index] = bestAt;
+		merged.side[index] = bestSide;
+		merged.code[index] = edits.code[edit]!;
+	}
+	return merged;
 }
 
 function getOrder(options: InsertOptions | undefined) {
@@ -338,8 +425,9 @@ function getOrder(options: InsertOptions | undefined) {
 }
 
 class Cut<Source, Data> implements RewriteSlice<Source, Data> {
+	declare readonly isSlice: true;
 	/** The cuts directly inside, sorted and disjoint. */
-	children: Cut<Source, Data>[] = [];
+	children: Cut<Source, Data>[] | undefined;
 	isRoot = false;
 	placed = false;
 
@@ -351,73 +439,49 @@ class Cut<Source, Data> implements RewriteSlice<Source, Data> {
 		readonly placeholder: RewriteCode<Source, Data> | undefined,
 	) {}
 
-	pieces(out: Piece<Source, Data>[] = []) {
-		if (this.placed) {
-			throw new Error(`The cut ${this.start}..${this.end} is placed twice.`);
-		}
-		this.placed = true;
-		const rewrite = this.rewrite;
-		rewrite.freeze();
-		const { edits, head, tail } = rewrite;
-		const { start, end, children } = this;
-		if (start === end) {
-			if (this === rewrite.firstEmpty) {
-				pushAll(head, out);
-				pushAll(tail, out);
-			}
-			return out;
-		}
-		if (this.isRoot && start === 0) {
-			pushAll(head, out);
-		}
-		const walker = new Walker(rewrite.removals, rewrite.source, this.data, out, start);
-		const { at, side, code } = edits;
-		const size = at.length;
-		let edit = edits.lowerBound(start, 0);
-		for (let index = 0;; index++) {
-			const child = children[index];
-			const until = child ? child.start : end;
-			for (; edit < size && at[edit]! < until; edit++) {
-				walker.keep(side[edit] === Side.After ? at[edit]! + 1 : at[edit]!);
-				pushCode(code[edit]!, out);
-			}
-			if (!child) {
-				break;
-			}
-			walker.keep(child.start);
-			if (child.placeholder !== undefined) {
-				pushCode(child.placeholder, out);
-			}
-			walker.skip(child.end);
-			edit = edits.lowerBound(child.end, edit);
-		}
-		walker.keep(end);
-		if (this.isRoot && end === rewrite.text.length) {
-			pushAll(tail, out);
-		}
-		return out;
+	render(sink: PieceSink<Source, Data>) {
+		this.rewrite.freeze();
+		renderCut(this, new Walker(this.rewrite, sink));
 	}
 }
+(Cut.prototype as { isSlice: true }).isSlice = true;
 
-/** Pushes the kept chars of one cut, as pieces between the removals. */
+/** The state of one render: the sink, and the position in the text and in the removals. */
 class Walker<Source, Data> {
+	readonly source: Source;
+	readonly removals: Int32Array;
+	readonly removalsSize: number;
+	pos = 0;
 	/** The first removal that ends after `pos`. */
 	removal = 0;
 
-	constructor(
-		readonly removals: Int32Array,
-		readonly source: Source,
-		readonly data: Data,
-		readonly out: Piece<Source, Data>[],
-		public pos: number,
-	) {
-		this.seek();
+	constructor(rewrite: Rewrite<Source, Data>, readonly sink: PieceSink<Source, Data>) {
+		this.source = rewrite.source;
+		this.removals = rewrite.removals;
+		this.removalsSize = rewrite.removalsSize;
 	}
 
-	/** The kept chars from `pos` to `to`. */
-	keep(to: number) {
-		const { removals, out } = this;
-		const size = removals.length;
+	/** Moves to `pos`, in a cut whose kept chars start there. */
+	seek(pos: number) {
+		const removals = this.removals;
+		let low = 0;
+		let high = this.removalsSize >> 1;
+		while (low < high) {
+			const mid = (low + high) >>> 1;
+			if (removals[2 * mid + 1]! <= pos) {
+				low = mid + 1;
+			}
+			else {
+				high = mid;
+			}
+		}
+		this.pos = pos;
+		this.removal = low * 2;
+	}
+
+	/** The kept chars from `pos` to `to`, with `data`. */
+	keep(to: number, data: Data) {
+		const { removals, removalsSize: size, sink, source } = this;
 		let { pos, removal } = this;
 		while (pos < to) {
 			while (removal < size && removals[removal + 1]! <= pos) {
@@ -428,58 +492,79 @@ class Walker<Source, Data> {
 				continue;
 			}
 			const stop = removal < size && removals[removal]! < to ? removals[removal]! : to;
-			out.push({ source: this.source, start: pos, end: stop, data: this.data });
+			sink.range(source, pos, stop, data, undefined);
 			pos = stop;
 		}
 		this.pos = pos;
 		this.removal = removal;
 	}
+}
 
-	/** Moves past the chars up to `to`, which a child cut owns. */
-	skip(to: number) {
-		this.pos = to;
-		this.seek();
+function renderCut<Source, Data>(cut: Cut<Source, Data>, walker: Walker<Source, Data>) {
+	if (cut.placed) {
+		throw new Error(`The cut ${cut.start}..${cut.end} is placed twice.`);
 	}
-
-	private seek() {
-		const removals = this.removals;
-		let low = this.removal >> 1;
-		let high = removals.length >> 1;
-		while (low < high) {
-			const mid = (low + high) >>> 1;
-			if (removals[2 * mid + 1]! <= this.pos) {
-				low = mid + 1;
-			}
-			else {
-				high = mid;
+	cut.placed = true;
+	const rewrite = cut.rewrite;
+	const edits = rewrite.edits;
+	const { at, side, code } = edits;
+	const size = edits.size;
+	const { start, end, children, data, isRoot } = cut;
+	if (start === end) {
+		if (cut === rewrite.firstEmpty) {
+			for (let edit = 0; edit < size; edit++) {
+				renderCode(code[edit]!, walker);
 			}
 		}
-		this.removal = low * 2;
+		return;
 	}
+	const { pos, removal } = walker;
+	walker.seek(start);
+	let edit = isRoot && start === 0 ? 0 : edits.lowerBound(start, 0);
+	for (let index = 0;; index++) {
+		const child = children?.[index];
+		const until = child ? child.start : end;
+		for (; edit < size && at[edit]! < until; edit++) {
+			walker.keep(side[edit] === Side.After ? at[edit]! + 1 : at[edit]!, data);
+			renderCode(code[edit]!, walker);
+		}
+		if (!child) {
+			break;
+		}
+		walker.keep(child.start, data);
+		if (child.placeholder !== undefined) {
+			renderCode(child.placeholder, walker);
+		}
+		walker.seek(child.end);
+		edit = edits.lowerBound(child.end, edit);
+	}
+	walker.keep(end, data);
+	if (isRoot && end === rewrite.text.length) {
+		for (; edit < size; edit++) {
+			renderCode(code[edit]!, walker);
+		}
+	}
+	walker.pos = pos;
+	walker.removal = removal;
 }
 
-function pushAll<Source, Data>(edits: Edits<Source, Data>, out: Piece<Source, Data>[]) {
-	for (const code of edits.code) {
-		pushCode(code, out);
-	}
-}
-
-function pushCode<Source, Data>(code: RewriteCode<Source, Data>, out: Piece<Source, Data>[]) {
+function renderCode<Source, Data>(code: RewriteCode<Source, Data>, walker: Walker<Source, Data>) {
 	if (typeof code === 'string') {
 		if (code) {
-			out.push(code);
+			walker.sink.text(code);
 		}
-	}
-	else if (code instanceof Cut) {
-		code.pieces(out);
 	}
 	else if (isCodeArray(code)) {
 		for (let index = 0; index < code.length; index++) {
-			pushCode(code[index]!, out);
+			renderCode(code[index]!, walker);
 		}
 	}
+	else if ((code as Cut<Source, Data>).isSlice) {
+		renderCut(code as Cut<Source, Data>, walker);
+	}
 	else {
-		out.push(code as Exclude<Piece<Source, Data>, string>);
+		const piece = code as Exclude<Piece<Source, Data>, string>;
+		walker.sink.range(piece.source, piece.start, piece.end, piece.data, piece.text);
 	}
 }
 

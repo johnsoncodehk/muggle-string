@@ -16,7 +16,13 @@ const other = 'other';
 
 /** The pieces of `slice`: text, and kept source ranges with the data of their cut. */
 function collect(slice: RewriteSlice<string, string>) {
-	return slice.pieces();
+	const pieces: Piece<string, string>[] = [];
+	slice.render({
+		text: text => pieces.push(text),
+		range: (source, start, end, data, text) =>
+			pieces.push(text === undefined ? { source, start, end, data } : { source, start, end, data, text }),
+	});
+	return pieces;
 }
 
 /** The text of `pieces`, whose kept pieces copy the text of `rewrite`. */
@@ -202,14 +208,22 @@ describe('scenarios', () => {
 			'y',
 			{ source: s, start: 1, end: 2, data: 'body' },
 		]);
-		expect(pieces[1]).toBe(mapped);
 	});
 
-	test('pieces append to the given array', () => {
+	test('a render passes every piece to the sink, a kept one without text', () => {
 		const rewrite = createSourceRewrite<string, string>(s, 'ab');
-		const out: Piece<string, string>[] = ['x'];
-		expect(rewrite.core.cut(0, 2, { data: 'body' }).pieces(out)).toBe(out);
-		expect(out).toEqual(['x', { source: s, start: 0, end: 2, data: 'body' }]);
+		rewrite.core.insertBefore(1, ['x', { source: other, start: 0, end: 0, data: 'mapped', text: 'y' }]);
+		const calls: unknown[][] = [];
+		rewrite.core.cut(0, 2, { data: 'body' }).render({
+			text: (...args) => calls.push(['text', ...args]),
+			range: (...args) => calls.push(['range', ...args]),
+		});
+		expect(calls).toEqual([
+			['range', s, 0, 1, 'body', undefined],
+			['text', 'x'],
+			['range', other, 0, 0, 'mapped', 'y'],
+			['range', s, 1, 2, 'body', undefined],
+		]);
 	});
 });
 
