@@ -90,14 +90,24 @@ class Edits<Source, Data> {
 	code: RewriteCode<Source, Data>[] = [];
 	/** The orders that are not 0, by edit. */
 	orders: Map<number, number> | undefined;
+	/** Whether the edits arrived in render order. */
+	sorted = true;
+	lastOrder = 0;
 
 	constructor(readonly rank: number) {}
 
 	add(at: number, side: Side, order: number, code: RewriteCode<Source, Data>) {
-		if (order !== 0) {
-			(this.orders ??= new Map()).set(this.keys.length, order);
+		const keys = this.keys;
+		const key = at * 4 + side;
+		const last = keys.length ? keys[keys.length - 1]! : -Infinity;
+		if (key < last || key === last && order < this.lastOrder) {
+			this.sorted = false;
 		}
-		this.keys.push(at * 4 + side);
+		if (order !== 0) {
+			(this.orders ??= new Map()).set(keys.length, order);
+		}
+		this.lastOrder = order;
+		keys.push(key);
 		this.code.push(code);
 	}
 
@@ -120,18 +130,11 @@ class Edits<Source, Data> {
 
 	/** Sorts the edits, which usually arrive in order. */
 	sort() {
-		const { keys, code, orders } = this;
-		const size = keys.length;
-		let index = 1;
-		while (
-			index < size
-			&& (keys[index - 1]! < keys[index]! || keys[index - 1] === keys[index] && !(orders && compareOrders(orders, index - 1, index) > 0))
-		) {
-			index++;
-		}
-		if (index >= size) {
+		if (this.sorted) {
 			return;
 		}
+		const { keys, code, orders } = this;
+		const size = keys.length;
 		const sorted: number[] = [];
 		for (let index = 0; index < size; index++) {
 			sorted.push(index);
