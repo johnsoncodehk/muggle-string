@@ -118,31 +118,41 @@ class Edits<Source, Data> {
 		return low;
 	}
 
-	compare(a: number, b: number) {
-		const keys = this.keys;
-		if (keys[a] !== keys[b]) {
-			return keys[a]! - keys[b]!;
-		}
-		const orderA = this.orders?.get(a) ?? 0;
-		const orderB = this.orders?.get(b) ?? 0;
-		return orderA !== orderB ? (orderA < orderB ? -1 : 1) : a - b;
-	}
-
 	/** Sorts the edits, which usually arrive in order. */
 	sort() {
-		const size = this.keys.length;
+		const { keys, code, orders } = this;
+		const size = keys.length;
 		let index = 1;
-		while (index < size && this.compare(index - 1, index) < 0) {
+		while (
+			index < size
+			&& (keys[index - 1]! < keys[index]! || keys[index - 1] === keys[index] && !(orders && compareOrders(orders, index - 1, index) > 0))
+		) {
 			index++;
 		}
 		if (index >= size) {
 			return;
 		}
-		const sorted = Array.from({ length: size }, (_, index) => index).sort((a, b) => this.compare(a, b));
-		this.keys = sorted.map(from => this.keys[from]!);
-		this.code = sorted.map(from => this.code[from]!);
+		const sorted: number[] = [];
+		for (let index = 0; index < size; index++) {
+			sorted.push(index);
+		}
+		sorted.sort((a, b) => keys[a]! - keys[b]! || (orders ? compareOrders(orders, a, b) : 0) || a - b);
+		const sortedKeys: number[] = [];
+		const sortedCode: RewriteCode<Source, Data>[] = [];
+		for (let index = 0; index < size; index++) {
+			sortedKeys.push(keys[sorted[index]!]!);
+			sortedCode.push(code[sorted[index]!]!);
+		}
+		this.keys = sortedKeys;
+		this.code = sortedCode;
 		this.orders = undefined;
 	}
+}
+
+function compareOrders(orders: Map<number, number>, a: number, b: number) {
+	const orderA = orders.get(a) ?? 0;
+	const orderB = orders.get(b) ?? 0;
+	return orderA < orderB ? -1 : orderA > orderB ? 1 : 0;
 }
 
 class Rewrite<Source, Data> implements SourceRewrite<Source, Data> {
