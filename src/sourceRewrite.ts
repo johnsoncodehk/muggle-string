@@ -445,7 +445,7 @@ function renderCut<Source, Data>(cut: Cut<Source, Data>, walker: Walker<Source, 
 		}
 		walker.keep(child.start, data);
 		if (child.placeholder !== undefined) {
-			renderCode(child.placeholder, walker);
+			renderCode(child.placeholder, walker.sink);
 		}
 		walker.seek(child.end);
 		for (let writer = 0; writer < writers.length; writer++) {
@@ -508,30 +508,30 @@ function renderEdits<Source, Data>(
 			if (keep) {
 				walker.keep((key >> 2) + ((key & 3) === Side.After ? 1 : 0), data);
 			}
-			renderCode(code[edit++]!, walker);
+			renderCode(code[edit++]!, walker.sink);
 		}
 		while (edit < code.length && keys[edit]! < bound);
 		next[best] = edit;
 	}
 }
 
-function renderCode<Source, Data>(code: RewriteCode<Source, Data>, walker: Walker<Source, Data>) {
+function renderCode<Source, Data>(code: RewriteCode<Source, Data>, sink: PieceSink<Source, Data>) {
 	if (typeof code === 'string') {
 		if (code) {
-			walker.sink.text(code);
+			sink.text(code);
 		}
 	}
 	else if (isCodeArray(code)) {
 		for (let index = 0; index < code.length; index++) {
-			renderCode(code[index]!, walker);
+			renderCode(code[index]!, sink);
 		}
 	}
 	else if (isSlice(code)) {
-		code.render(walker.sink);
+		code.render(sink);
 	}
 	else {
 		const piece = code as Exclude<Piece<Source, Data>, string>;
-		walker.sink.range(piece.source, piece.start, piece.end, piece.data, piece.text);
+		sink.range(piece.source, piece.start, piece.end, piece.data, piece.text);
 	}
 }
 
