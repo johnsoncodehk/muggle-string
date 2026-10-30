@@ -86,10 +86,12 @@ class Edits<Source, Data> {
 	code: RewriteCode<Source, Data>[] = [];
 	/** Whether the edits arrived in render order. */
 	sorted = true;
-	/** The writer that adds the edits. */
-	writer!: RewriteWriter<Source, Data>;
 
-	constructor(readonly rank: number) {}
+	constructor(
+		readonly rank: number,
+		/** The writer that adds the edits. */
+		readonly writer: RewriteWriter<Source, Data>,
+	) {}
 
 	add(at: number, side: Side, code: RewriteCode<Source, Data>) {
 		let keys = this.keys;
@@ -167,20 +169,18 @@ class Rewrite<Source, Data> implements SourceRewrite<Source, Data> {
 	frozen = false;
 
 	constructor(readonly source: Source, readonly text: string) {
-		this.core = this.createWriter(coreRank).writer;
+		this.core = this.createEdits(coreRank).writer;
 	}
 
 	writer(rank: number): RewriteWriter<Source, Data> {
 		if (!Number.isInteger(rank) || rank < 0 || rank >= coreRank) {
 			throw new RangeError(`The rank ${rank} is not a non-negative integer below the rank of core.`);
 		}
-		return (this.edits.get(rank) ?? this.createWriter(rank)).writer;
+		return (this.edits.get(rank) ?? this.createEdits(rank)).writer;
 	}
 
-	private createWriter(rank: number) {
-		const edits = new Edits<Source, Data>(rank);
-		this.edits.set(rank, edits);
-		edits.writer = {
+	private createEdits(rank: number) {
+		const writer: RewriteWriter<Source, Data> = {
 			insertBefore: (offset, code) => {
 				this.check(offset, offset);
 				edits.add(offset, offset === this.text.length ? Side.After : Side.Before, code);
@@ -214,6 +214,8 @@ class Rewrite<Source, Data> implements SourceRewrite<Source, Data> {
 				return cut;
 			},
 		};
+		const edits = new Edits(rank, writer);
+		this.edits.set(rank, edits);
 		return edits;
 	}
 
