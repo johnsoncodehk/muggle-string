@@ -80,37 +80,22 @@ const enum Side {
 }
 
 /**
- * Edits by column. An edit is anchored at a side of a char; `insertAfter(0)` anchors before the char -1, so it renders
+ * Edits by column. An edit is anchored at a side of a char, as the key `at * 4 + side`, which sorts in render order;
+ * keys are below 2 ** 31, as text is shorter than 2 ** 29. `insertAfter(0)` anchors before the char -1, so it renders
  * before all text, and `insertBefore(length)` after the char `length`, so it renders after all text.
  */
 class Edits<Source, Data> {
-	size = 0;
-	at = new Int32Array(16);
-	side = new Uint8Array(16);
+	keys: number[] = [];
 	code: RewriteCode<Source, Data>[] = [];
 
-	push(at: number, side: Side, code: RewriteCode<Source, Data>) {
-		const index = this.size++;
-		if (index === this.at.length) {
-			const at = new Int32Array(index * 2);
-			at.set(this.at);
-			this.at = at;
-			const side = new Uint8Array(index * 2);
-			side.set(this.side);
-			this.side = side;
-		}
-		this.at[index] = at;
-		this.side[index] = side;
-		this.code.push(code);
-	}
-
-	/** The first index from `low` whose anchor is at or after `offset`. */
+	/** The first index from `low` whose anchor is at or after the char `offset`. */
 	lowerBound(offset: number, low: number) {
-		const at = this.at;
-		let high = this.size;
+		const keys = this.keys;
+		const key = offset * 4;
+		let high = keys.length;
 		while (low < high) {
 			const mid = (low + high) >>> 1;
-			if (at[mid]! < offset) {
+			if (keys[mid]! < key) {
 				low = mid + 1;
 			}
 			else {
@@ -132,18 +117,16 @@ class WriterEdits<Source, Data> extends Edits<Source, Data> {
 
 	add(at: number, side: Side, order: number, code: RewriteCode<Source, Data>) {
 		if (order !== 0) {
-			(this.orders ??= new Map()).set(this.size, order);
+			(this.orders ??= new Map()).set(this.keys.length, order);
 		}
-		this.push(at, side, code);
+		this.keys.push(at * 4 + side);
+		this.code.push(code);
 	}
 
 	compare(a: number, b: number) {
-		const { at, side } = this;
-		if (at[a] !== at[b]) {
-			return at[a]! - at[b]!;
-		}
-		if (side[a] !== side[b]) {
-			return side[a]! - side[b]!;
+		const keys = this.keys;
+		if (keys[a] !== keys[b]) {
+			return keys[a]! - keys[b]!;
 		}
 		const orderA = this.orders?.get(a) ?? 0;
 		const orderB = this.orders?.get(b) ?? 0;
@@ -152,7 +135,7 @@ class WriterEdits<Source, Data> extends Edits<Source, Data> {
 
 	/** Sorts the edits, which usually arrive in order. */
 	sort() {
-		const size = this.size;
+		const size = this.keys.length;
 		let index = 1;
 		while (index < size && this.compare(index - 1, index) < 0) {
 			index++;
@@ -161,18 +144,8 @@ class WriterEdits<Source, Data> extends Edits<Source, Data> {
 			return;
 		}
 		const sorted = Array.from({ length: size }, (_, index) => index).sort((a, b) => this.compare(a, b));
-		const at = new Int32Array(size);
-		const side = new Uint8Array(size);
-		const code = new Array<RewriteCode<Source, Data>>(size);
-		for (let index = 0; index < size; index++) {
-			const from = sorted[index]!;
-			at[index] = this.at[from]!;
-			side[index] = this.side[from]!;
-			code[index] = this.code[from]!;
-		}
-		this.at = at;
-		this.side = side;
-		this.code = code;
+		this.keys = sorted.map(from => this.keys[from]!);
+		this.code = sorted.map(from => this.code[from]!);
 		this.orders = undefined;
 	}
 }
@@ -324,7 +297,7 @@ class Rewrite<Source, Data> implements SourceRewrite<Source, Data> {
 			return;
 		}
 		this.frozen = true;
-		this.edits = mergeWriters(this.writerEdits.filter(edits => edits.size));
+		this.edits = mergeWriters(this.writerEdits.filter(edits => edits.keys.length));
 		this.writerEdits = [];
 		this.mergeRemovals();
 		for (const root of this.roots) {
@@ -379,39 +352,29 @@ function mergeWriters<Source, Data>(writers: WriterEdits<Source, Data>[]): Edits
 		return writers[0] ?? new Edits();
 	}
 	const merged = new Edits<Source, Data>();
-	const size = writers.reduce((size, writer) => size + writer.size, 0);
-	merged.at = new Int32Array(size);
-	merged.side = new Uint8Array(size);
-	merged.code = new Array(size);
-	merged.size = size;
+	const size = writers.reduce((size, writer) => size + writer.keys.length, 0);
 	const next = new Array<number>(writers.length).fill(0);
 	for (let index = 0; index < size; index++) {
 		let best = -1;
-		let bestAt = 0;
-		let bestSide = 0;
+		let bestKey = 0;
 		for (let writer = 0; writer < writers.length; writer++) {
-			const edit = next[writer]!;
 			const edits = writers[writer]!;
-			if (edit === edits.size) {
+			const edit = next[writer]!;
+			if (edit === edits.keys.length) {
 				continue;
 			}
-			const at = edits.at[edit]!;
-			const side = edits.side[edit]!;
+			const key = edits.keys[edit]!;
 			if (
-				best === -1 || at < bestAt || (at === bestAt && (side < bestSide || (side === bestSide && (
-					side === Side.Before ? edits.rank > writers[best]!.rank : edits.rank < writers[best]!.rank
-				))))
+				best === -1 || key < bestKey || (key === bestKey && (
+					(key & 3) === Side.Before ? edits.rank > writers[best]!.rank : edits.rank < writers[best]!.rank
+				))
 			) {
 				best = writer;
-				bestAt = at;
-				bestSide = side;
+				bestKey = key;
 			}
 		}
-		const edits = writers[best]!;
-		const edit = next[best]!++;
-		merged.at[index] = bestAt;
-		merged.side[index] = bestSide;
-		merged.code[index] = edits.code[edit]!;
+		merged.keys.push(bestKey);
+		merged.code.push(writers[best]!.code[next[best]!++]!);
 	}
 	return merged;
 }
@@ -507,8 +470,8 @@ function renderCut<Source, Data>(cut: Cut<Source, Data>, walker: Walker<Source, 
 	cut.placed = true;
 	const rewrite = cut.rewrite;
 	const edits = rewrite.edits;
-	const { at, side, code } = edits;
-	const size = edits.size;
+	const { keys, code } = edits;
+	const size = keys.length;
 	const { start, end, children, data, isRoot } = cut;
 	if (start === end) {
 		if (cut === rewrite.firstEmpty) {
@@ -524,8 +487,9 @@ function renderCut<Source, Data>(cut: Cut<Source, Data>, walker: Walker<Source, 
 	for (let index = 0;; index++) {
 		const child = children?.[index];
 		const until = child ? child.start : end;
-		for (; edit < size && at[edit]! < until; edit++) {
-			walker.keep(side[edit] === Side.After ? at[edit]! + 1 : at[edit]!, data);
+		for (const last = until * 4; edit < size && keys[edit]! < last; edit++) {
+			const key = keys[edit]!;
+			walker.keep((key >> 2) + ((key & 3) === Side.After ? 1 : 0), data);
 			renderCode(code[edit]!, walker);
 		}
 		if (!child) {
