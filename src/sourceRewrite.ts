@@ -80,13 +80,26 @@ const enum Side {
 }
 
 /**
- * Edits by column. An edit is anchored at a side of a char, as the key `at * 4 + side`, which sorts in render order;
- * keys are below 2 ** 31, as text is shorter than 2 ** 29. `insertAfter(0)` anchors before the char -1, so it renders
- * before all text, and `insertBefore(length)` after the char `length`, so it renders after all text.
+ * The edits of one writer by column, in call order, which is the order of equal keys; its rank is the same for all.
+ * An edit is anchored at a side of a char, as the key `at * 4 + side`, which sorts in render order; keys are below
+ * 2 ** 31, as text is shorter than 2 ** 29. `insertAfter(0)` anchors before the char -1, so it renders before all
+ * text, and `insertBefore(length)` after the char `length`, so it renders after all text.
  */
 class Edits<Source, Data> {
 	keys: number[] = [];
 	code: RewriteCode<Source, Data>[] = [];
+	/** The orders that are not 0, by edit. */
+	orders: Map<number, number> | undefined;
+
+	constructor(readonly rank: number) {}
+
+	add(at: number, side: Side, order: number, code: RewriteCode<Source, Data>) {
+		if (order !== 0) {
+			(this.orders ??= new Map()).set(this.keys.length, order);
+		}
+		this.keys.push(at * 4 + side);
+		this.code.push(code);
+	}
 
 	/** The first index from `low` whose anchor is at or after the char `offset`. */
 	lowerBound(offset: number, low: number) {
@@ -103,24 +116,6 @@ class Edits<Source, Data> {
 			}
 		}
 		return low;
-	}
-}
-
-/** The edits of one writer, in call order, which is the order of equal keys; its rank is the same for all. */
-class WriterEdits<Source, Data> extends Edits<Source, Data> {
-	/** The orders that are not 0, by edit. */
-	orders: Map<number, number> | undefined;
-
-	constructor(readonly rank: number) {
-		super();
-	}
-
-	add(at: number, side: Side, order: number, code: RewriteCode<Source, Data>) {
-		if (order !== 0) {
-			(this.orders ??= new Map()).set(this.keys.length, order);
-		}
-		this.keys.push(at * 4 + side);
-		this.code.push(code);
 	}
 
 	compare(a: number, b: number) {
@@ -153,9 +148,8 @@ class WriterEdits<Source, Data> extends Edits<Source, Data> {
 class Rewrite<Source, Data> implements SourceRewrite<Source, Data> {
 	readonly core: RewriteWriter<Source, Data>;
 	writers = new Map<number, RewriteWriter<Source, Data>>();
-	writerEdits: WriterEdits<Source, Data>[] = [];
-	/** The edits of all writers, sorted, filled when frozen. */
-	edits: Edits<Source, Data> = new Edits();
+	/** The edits of each writer; when frozen, of each writer that has some, sorted. */
+	writerEdits: Edits<Source, Data>[] = [];
 	/** Removed ranges as flat start, end pairs; sorted and merged when frozen. */
 	removals = new Int32Array(16);
 	removalsSize = 0;
@@ -183,7 +177,7 @@ class Rewrite<Source, Data> implements SourceRewrite<Source, Data> {
 	}
 
 	private createWriter(rank: number): RewriteWriter<Source, Data> {
-		const edits = new WriterEdits<Source, Data>(rank);
+		const edits = new Edits<Source, Data>(rank);
 		this.writerEdits.push(edits);
 		return {
 			insertBefore: (offset, code, options) => {
@@ -297,8 +291,10 @@ class Rewrite<Source, Data> implements SourceRewrite<Source, Data> {
 			return;
 		}
 		this.frozen = true;
-		this.edits = mergeWriters(this.writerEdits.filter(edits => edits.keys.length));
-		this.writerEdits = [];
+		this.writerEdits = this.writerEdits.filter(edits => edits.keys.length);
+		for (const edits of this.writerEdits) {
+			edits.sort();
+		}
 		this.mergeRemovals();
 		for (const root of this.roots) {
 			root.isRoot = true;
@@ -338,45 +334,6 @@ class Rewrite<Source, Data> implements SourceRewrite<Source, Data> {
 		this.removals = removals;
 		this.removalsSize = merged;
 	}
-}
-
-/**
- * The edits of all writers in render order. At one side of one char, the code before the text goes outermost (highest
- * rank) first, and the code in the place of the char and after the text innermost first.
- */
-function mergeWriters<Source, Data>(writers: WriterEdits<Source, Data>[]): Edits<Source, Data> {
-	for (const writer of writers) {
-		writer.sort();
-	}
-	if (writers.length <= 1) {
-		return writers[0] ?? new Edits();
-	}
-	const merged = new Edits<Source, Data>();
-	const size = writers.reduce((size, writer) => size + writer.keys.length, 0);
-	const next = new Array<number>(writers.length).fill(0);
-	for (let index = 0; index < size; index++) {
-		let best = -1;
-		let bestKey = 0;
-		for (let writer = 0; writer < writers.length; writer++) {
-			const edits = writers[writer]!;
-			const edit = next[writer]!;
-			if (edit === edits.keys.length) {
-				continue;
-			}
-			const key = edits.keys[edit]!;
-			if (
-				best === -1 || key < bestKey || (key === bestKey && (
-					(key & 3) === Side.Before ? edits.rank > writers[best]!.rank : edits.rank < writers[best]!.rank
-				))
-			) {
-				best = writer;
-				bestKey = key;
-			}
-		}
-		merged.keys.push(bestKey);
-		merged.code.push(writers[best]!.code[next[best]!++]!);
-	}
-	return merged;
 }
 
 function getOrder(options: InsertOptions | undefined) {
@@ -469,29 +426,27 @@ function renderCut<Source, Data>(cut: Cut<Source, Data>, walker: Walker<Source, 
 	}
 	cut.placed = true;
 	const rewrite = cut.rewrite;
-	const edits = rewrite.edits;
-	const { keys, code } = edits;
-	const size = keys.length;
+	const writers = rewrite.writerEdits;
 	const { start, end, children, data, isRoot } = cut;
+	/** The next edit of each writer. */
+	const next: number[] = [];
 	if (start === end) {
 		if (cut === rewrite.firstEmpty) {
-			for (let edit = 0; edit < size; edit++) {
-				renderCode(code[edit]!, walker);
+			for (let writer = 0; writer < writers.length; writer++) {
+				next.push(0);
 			}
+			renderEdits(writers, next, Infinity, walker, cut.data, false);
 		}
 		return;
 	}
 	const { pos, removal } = walker;
 	walker.seek(start);
-	let edit = isRoot && start === 0 ? 0 : edits.lowerBound(start, 0);
+	for (const edits of writers) {
+		next.push(isRoot && start === 0 ? 0 : edits.lowerBound(start, 0));
+	}
 	for (let index = 0;; index++) {
 		const child = children?.[index];
-		const until = child ? child.start : end;
-		for (const last = until * 4; edit < size && keys[edit]! < last; edit++) {
-			const key = keys[edit]!;
-			walker.keep((key >> 2) + ((key & 3) === Side.After ? 1 : 0), data);
-			renderCode(code[edit]!, walker);
-		}
+		renderEdits(writers, next, (child ? child.start : end) * 4, walker, data, true);
 		if (!child) {
 			break;
 		}
@@ -500,16 +455,73 @@ function renderCut<Source, Data>(cut: Cut<Source, Data>, walker: Walker<Source, 
 			renderCode(child.placeholder, walker);
 		}
 		walker.seek(child.end);
-		edit = edits.lowerBound(child.end, edit);
+		for (let writer = 0; writer < writers.length; writer++) {
+			next[writer] = writers[writer]!.lowerBound(child.end, next[writer]!);
+		}
 	}
 	walker.keep(end, data);
 	if (isRoot && end === rewrite.text.length) {
-		for (; edit < size; edit++) {
-			renderCode(code[edit]!, walker);
-		}
+		renderEdits(writers, next, Infinity, walker, data, false);
 	}
 	walker.pos = pos;
 	walker.removal = removal;
+}
+
+/**
+ * The edits of all writers from `next` to the key `last`, in render order: at one side of one char, the code before
+ * the text goes outermost (highest rank) first, and the code in the place of the char and after the text innermost
+ * first. With `keep`, the kept text up to the anchor of each, with `data`, before it.
+ */
+function renderEdits<Source, Data>(
+	writers: Edits<Source, Data>[],
+	next: number[],
+	last: number,
+	walker: Walker<Source, Data>,
+	data: Data,
+	keep: boolean,
+) {
+	while (true) {
+		let best = -1;
+		let bestKey = last;
+		// the first key of the other writers, up to which the best one renders its run
+		let bound = last;
+		for (let writer = 0; writer < writers.length; writer++) {
+			const { keys, rank } = writers[writer]!;
+			const edit = next[writer]!;
+			if (edit < keys.length) {
+				const key = keys[edit]!;
+				if (
+					key < bestKey || (key === bestKey && best !== -1 && (
+						(key & 3) === Side.Before ? rank > writers[best]!.rank : rank < writers[best]!.rank
+					))
+				) {
+					if (best !== -1) {
+						bound = bestKey;
+					}
+					best = writer;
+					bestKey = key;
+				}
+				else if (key < bound) {
+					bound = key;
+				}
+			}
+		}
+		if (best === -1) {
+			return;
+		}
+		const { keys, code } = writers[best]!;
+		let edit = next[best]!;
+		// an edit at `bound` itself may lose to the other writer there: it is chosen again
+		do {
+			const key = keys[edit]!;
+			if (keep) {
+				walker.keep((key >> 2) + ((key & 3) === Side.After ? 1 : 0), data);
+			}
+			renderCode(code[edit++]!, walker);
+		}
+		while (edit < keys.length && keys[edit]! < bound);
+		next[best] = edit;
+	}
 }
 
 function renderCode<Source, Data>(code: RewriteCode<Source, Data>, walker: Walker<Source, Data>) {
