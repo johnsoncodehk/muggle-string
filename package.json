@@ -1,6 +1,6 @@
 {
 	"name": "muggle-string",
-	"version": "1.0.0-alpha.0",
+	"version": "1.0.0-alpha.1",
 	"description": "Ranked, conflict-free rewrites of a source text, rendered as format-neutral pieces",
 	"main": "out/index.js",
 	"types": "out/index.d.ts",
