@@ -35,17 +35,9 @@ export interface RewriteWriter<Source, Data> {
 	cut(start: number, end: number, options: CutOptions<Source, Data>): RewriteSlice<Source, Data>;
 }
 
-/** Receives the pieces of a render, in order: the same two shapes as `Piece`, as arguments. */
-export interface PieceSink<Source, Data> {
-	/** New text, not empty, which maps nowhere. */
-	text(text: string): void;
-	/** The range `start`..`end` of the text of `source`. `text` is undefined for kept text, which copies the range. */
-	range(source: Source, start: number, end: number, data: Data, text: string | undefined): void;
-}
-
 export interface RewriteSlice<Source, Data> {
-	/** Renders the pieces of the slice into `sink`, in order. */
-	render(sink: PieceSink<Source, Data>): void;
+	/** Passes the pieces of the slice to `sink`, in order: no string is empty, and kept text is a range without `text`. */
+	render(sink: (piece: Piece<{ source: Source; data: Data }>) => void): void;
 }
 
 /**
@@ -359,7 +351,7 @@ class Cut<Source, Data> implements RewriteSlice<Source, Data> {
 		readonly placeholder: RewriteCode<Source, Data> | undefined,
 	) {}
 
-	render(sink: PieceSink<Source, Data>) {
+	render(sink: (piece: Piece<{ source: Source; data: Data }>) => void) {
 		this.rewrite.freeze();
 		renderCut(this, new Walker(this.rewrite, sink));
 	}
@@ -374,7 +366,7 @@ class Walker<Source, Data> {
 	/** The first removal that ends after `pos`. */
 	removal = 0;
 
-	constructor(rewrite: Rewrite<Source, Data>, readonly sink: PieceSink<Source, Data>) {
+	constructor(rewrite: Rewrite<Source, Data>, readonly sink: (piece: Piece<{ source: Source; data: Data }>) => void) {
 		this.source = rewrite.source;
 		this.removals = rewrite.removals;
 		this.removalsSize = rewrite.removalsSize;
@@ -411,7 +403,7 @@ class Walker<Source, Data> {
 				continue;
 			}
 			const stop = removal < size && removals[removal]! < to ? removals[removal]! : to;
-			sink.range(source, pos, stop, data, undefined);
+			sink({ source, start: pos, end: stop, data });
 			pos = stop;
 		}
 		this.pos = pos;
@@ -520,10 +512,10 @@ function renderEdits<Source, Data>(
 	}
 }
 
-function renderCode<Source, Data>(code: RewriteCode<Source, Data>, sink: PieceSink<Source, Data>) {
+function renderCode<Source, Data>(code: RewriteCode<Source, Data>, sink: (piece: Piece<{ source: Source; data: Data }>) => void) {
 	if (typeof code === 'string') {
 		if (code) {
-			sink.text(code);
+			sink(code);
 		}
 	}
 	else if (isCodeArray(code)) {
@@ -535,8 +527,7 @@ function renderCode<Source, Data>(code: RewriteCode<Source, Data>, sink: PieceSi
 		code.render(sink);
 	}
 	else {
-		const piece = code as Exclude<Piece<{ source: Source; data: Data }>, string>;
-		sink.range(piece.source, piece.start, piece.end, piece.data, piece.text);
+		sink(code as Piece<{ source: Source; data: Data }>);
 	}
 }
 

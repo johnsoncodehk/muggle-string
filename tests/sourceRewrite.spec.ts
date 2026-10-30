@@ -28,11 +28,7 @@ function createRewrite(source: string, text: string) {
 /** The pieces of `slice`: text, and kept source ranges with the data of their cut. */
 function collect(slice: RewriteSlice<string, string>) {
 	const pieces: TestPiece[] = [];
-	slice.render({
-		text: text => pieces.push(text),
-		range: (source, start, end, data, text) =>
-			pieces.push(text === undefined ? { source, start, end, data } : { source, start, end, data, text }),
-	});
+	slice.render(piece => pieces.push(piece));
 	return pieces;
 }
 
@@ -118,10 +114,7 @@ describe('scenarios', () => {
 		rewrite.insertBefore(0, declaration);
 
 		let output = '';
-		file.render({
-			text: code => output += code,
-			range: (source, start, end, data, code) => output += code ?? text.slice(start, end),
-		});
+		file.render(piece => output += typeof piece === 'string' ? piece : piece.text ?? text.slice(piece.start, piece.end));
 		expect(output).toBe('const user = "Ada";\nlog(user);\n');
 	});
 
@@ -249,21 +242,17 @@ describe('scenarios', () => {
 			'y',
 			{ source: s, start: 1, end: 2, data: 'body' },
 		]);
+		expect(pieces[1]).toBe(mapped);
 	});
 
 	test('a render passes every piece to the sink, a kept one without text', () => {
 		const rewrite = createRewrite(s, 'ab');
 		rewrite.insertBefore(1, ['x', { source: other, start: 0, end: 0, data: 'mapped', text: 'y' }]);
-		const calls: unknown[][] = [];
-		rewrite.cut(0, 2, { data: 'body' }).render({
-			text: (...args) => calls.push(['text', ...args]),
-			range: (...args) => calls.push(['range', ...args]),
-		});
-		expect(calls).toEqual([
-			['range', s, 0, 1, 'body', undefined],
-			['text', 'x'],
-			['range', other, 0, 0, 'mapped', 'y'],
-			['range', s, 1, 2, 'body', undefined],
+		expect(collect(rewrite.cut(0, 2, { data: 'body' }))).toStrictEqual([
+			{ source: s, start: 0, end: 1, data: 'body' },
+			'x',
+			{ source: other, start: 0, end: 0, data: 'mapped', text: 'y' },
+			{ source: s, start: 1, end: 2, data: 'body' },
 		]);
 	});
 
@@ -288,7 +277,7 @@ describe('scenarios', () => {
 	test('a slice is any code that renders, and renders through its own render', () => {
 		const rewrite = createRewrite(s, 'ab');
 		const body = rewrite.cut(0, 2, { data: 'body' });
-		rewrite.insertAfter(1, [{ render: sink => sink.text('x') }, { render() {} }]);
+		rewrite.insertAfter(1, [{ render: sink => sink('x') }, { render() {} }]);
 		expect(render(rewrite, body)).toBe('axb');
 	});
 

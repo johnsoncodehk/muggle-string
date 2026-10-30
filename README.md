@@ -31,10 +31,7 @@ const declaration = rewrite.cut(text.indexOf('const'), text.length, { data: 'dec
 rewrite.insertBefore(0, declaration);
 
 let output = '';
-file.render({
-	text: code => output += code,
-	range: (source, start, end, data, code) => output += code ?? text.slice(start, end),
-});
+file.render(piece => output += typeof piece === 'string' ? piece : piece.text ?? text.slice(piece.start, piece.end));
 // const user = "Ada";
 // log(user);
 ```
@@ -53,19 +50,9 @@ Code is a piece of a rewrite, a slice, which renders its cut in place, or an arr
 
 ## Rendering
 
-```ts
-interface PieceSink<Source, Data> {
-	text(text: string): void;
-	range(source: Source, start: number, end: number, data: Data, text: string | undefined): void;
-}
-```
-
-`slice.render(sink)` passes the pieces of the slice to `sink` in order, as arguments rather than objects: `text` for a string, which is never empty, and `range` for a range, whose `text` is undefined for kept text. A consumer that wants an array of pieces collects them in its sink:
+`slice.render(sink)` passes the pieces of the slice to `sink`, a function of one piece, in order: no string is empty, a piece of code passes through as it is, and kept text is a range without `text`. A consumer that wants an array of pieces pushes them:
 
 ```ts
 const pieces: Piece<{ source: string; data: string }>[] = [];
-slice.render({
-	text: text => pieces.push(text),
-	range: (source, start, end, data, text) => pieces.push(text === undefined ? { source, start, end, data } : { source, start, end, data, text }),
-});
+slice.render(piece => pieces.push(piece));
 ```
