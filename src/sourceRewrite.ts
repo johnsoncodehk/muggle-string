@@ -94,6 +94,8 @@ class Edits<Source, Data> {
 	/** Whether the edits arrived in render order. */
 	sorted = true;
 	lastOrder = 0;
+	/** The writer that adds the edits. */
+	writer!: RewriteWriter<Source, Data>;
 
 	constructor(readonly rank: number) {}
 
@@ -167,8 +169,9 @@ function compareOrders(orders: Map<number, number>, a: number, b: number) {
 
 class Rewrite<Source, Data> implements SourceRewrite<Source, Data> {
 	readonly core: RewriteWriter<Source, Data>;
-	writers = new Map<number, RewriteWriter<Source, Data>>();
-	/** The edits of each writer; when frozen, of each writer that has some, sorted. */
+	/** The edits of each writer, by rank. */
+	edits = new Map<number, Edits<Source, Data>>();
+	/** When frozen, the edits of each writer that has some, sorted. */
 	writerEdits: Edits<Source, Data>[] = [];
 	/** Removed ranges as flat start, end pairs; sorted and merged when frozen. */
 	removals = new Int32Array(16);
@@ -184,24 +187,20 @@ class Rewrite<Source, Data> implements SourceRewrite<Source, Data> {
 	frozen = false;
 
 	constructor(readonly source: Source, readonly text: string) {
-		this.core = this.createWriter(coreRank);
+		this.core = this.createWriter(coreRank).writer;
 	}
 
 	writer(rank: number): RewriteWriter<Source, Data> {
 		if (!Number.isInteger(rank) || rank < 0 || rank >= coreRank) {
 			throw new RangeError(`The rank ${rank} is not a non-negative integer below the rank of core.`);
 		}
-		let writer = this.writers.get(rank);
-		if (!writer) {
-			this.writers.set(rank, writer = this.createWriter(rank));
-		}
-		return writer;
+		return (this.edits.get(rank) ?? this.createWriter(rank)).writer;
 	}
 
-	private createWriter(rank: number): RewriteWriter<Source, Data> {
+	private createWriter(rank: number) {
 		const edits = new Edits<Source, Data>(rank);
-		this.writerEdits.push(edits);
-		return {
+		this.edits.set(rank, edits);
+		edits.writer = {
 			insertBefore: (offset, code, options) => {
 				this.check(offset, offset);
 				edits.add(offset, offset === this.text.length ? Side.After : Side.Before, getOrder(options), code);
@@ -235,6 +234,7 @@ class Rewrite<Source, Data> implements SourceRewrite<Source, Data> {
 				return cut;
 			},
 		};
+		return edits;
 	}
 
 	private check(start: number, end: number) {
@@ -319,7 +319,7 @@ class Rewrite<Source, Data> implements SourceRewrite<Source, Data> {
 			return;
 		}
 		this.frozen = true;
-		this.writerEdits = this.writerEdits.filter(edits => edits.code.length);
+		this.writerEdits = [...this.edits.values()].filter(edits => edits.code.length);
 		for (const edits of this.writerEdits) {
 			edits.sort();
 		}
