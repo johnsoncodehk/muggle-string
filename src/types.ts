@@ -1,7 +1,12 @@
-declare const NO_DATA_SYMBOL: unique symbol;
-
-export type Segment<T = typeof NO_DATA_SYMBOL> = string | (
-	T extends typeof NO_DATA_SYMBOL ?
-	[text: string, source: string | undefined, sourceOffset: number] :
-	[text: string, source: string | undefined, sourceOffset: number, data: T]
-);
+/**
+ * Generated code: new text, which maps nowhere, or the range `start`..`end` of the text of `source`. A range without
+ * `text` is a copy of the text there; `text` is code that stands for the range, mapped as its consumer decides. An
+ * empty range is an anchor.
+ */
+export type Piece<Source, Data> = string | {
+	source: Source;
+	start: number;
+	end: number;
+	data: Data;
+	text?: string;
+};

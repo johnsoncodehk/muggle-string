@@ -1,72 +1,69 @@
-This library aims to provide codegen helpers and data structure for Vue language plugin API v1.x that does not depend on Volar runtime.
+Ranked, conflict-free rewrites of a source text, rendered as format-neutral pieces.
 
-## Why "Muggle"?
+muggle-string has no dependencies and knows no mapping format: a rewrite renders to pieces, new text and ranges of the source, and the consumer turns them into whatever its tooling maps with.
 
-A better situation is Volar can use magic-string on the Vue plugin API, but currently can't do this easily.
+> 1.0 replaces the segment-array helpers of 0.4 (`replace`, `replaceSourceRange`, `toString`, ...). They are gone, not deprecated.
 
-This solution is just for Vue language plugin API v1.x and planned to be deprecate in v2.
+## Model
+
+- The rewrite is itself a writer, and `rewrite.writer(rank)` gives the writer of a rank. A higher rank sits outside a lower one, and the rewrite sits outside all.
+- `insertBefore(offset, code)` and `insertAfter(offset, code)` attach code to a side of a char, so it goes wherever that char goes. `replace(start, end, code)` removes the text and puts `code` in the place of its first char.
+- Removals add up, so edits of different writers never conflict.
+- Text moves only by `cut(start, end, { data, placeholder })`, which every writer has. The cuts of all writers are nested or disjoint. A cut renders its text, with the edits of all writers in it, wherever its slice is placed, exactly once; the cut around it renders `placeholder` instead.
+- Code at the head or tail of a cut belongs to the outermost cut that has that edge.
+- The entries of one writer at one side of one char keep call order; code that must go outside them comes from a writer of a higher rank.
+- The first render freezes the rewrite.
 
 ## Usage
 
-The example is base-on [magic-string readme](https://github.com/rich-harris/magic-string#usage).
+```ts
+import { createSourceRewrite } from 'muggle-string';
 
-```html
-<script>problems = 99</script>
+const text = 'log(name);\nconst name = "Ada";\n';
+const rewrite = createSourceRewrite<string, string>('main.js', text);
 
-<more-script lang="js">console.log( answer )</more-script>
+for (const { index } of text.matchAll(/\bname\b/g)) {
+	rewrite.replace(index, index + 'name'.length, 'user');
+}
+
+const file = rewrite.cut(0, text.length, { data: 'file' });
+const declaration = rewrite.cut(text.indexOf('const'), text.length, { data: 'declaration' });
+rewrite.insertBefore(0, declaration);
+
+let output = '';
+file.render({
+	text: code => output += code,
+	range: (source, start, end, data, code) => output += code ?? text.slice(start, end),
+});
+// const user = "Ada";
+// log(user);
 ```
 
+## Pieces
+
 ```ts
-import {
-	toString,
-	replace,
-} from 'muggle-string';
+type Piece<Source, Data> = string | { source: Source; start: number; end: number; data: Data; text?: string };
+```
 
-/** @type {import('@volar/vue-language-core').VueLanguagePlugin} */
-const plugin = () => {
-	return {
-		name: 'example-vue-language-plugin',
-		version: 1,
-		resolveEmbeddedFile(fileName, sfc, embeddedFile) {
-			if (embeddedFile.fileName.replace(fileName, '').match(/^\.(js|ts|jsx|tsx)$/)) {
+A string is new text, which maps nowhere. An object is the range `start`..`end` of the text of `source`: without `text` it copies the text there, and with `text` it is code that stands for the range, mapped as the consumer of the pieces decides. The kept text of a rewrite renders as pieces without `text`, with the data of the cut that owns them.
 
-				const s = embeddedFile.content;
-				toString(s); // 'problems = 99'
+Code is a piece, a slice, which renders its cut in place, or an array of code.
 
-				replace(s, 'problems', 'answer');
-				toString(s); // 'answer = 99'
+## Rendering
 
-				replace(s, '99', '42');
-				toString(s); // 'answer = 42'
+```ts
+interface PieceSink<Source, Data> {
+	text(text: string): void;
+	range(source: Source, start: number, end: number, data: Data, text: string | undefined): void;
+}
+```
 
-				// add string by Array method directly
-				s.unshift('var ');
-				s.push(';');
-				toString(s); // 'var answer = 42;'
+`slice.render(sink)` passes the pieces of the slice to `sink` in order, as arguments rather than objects: `text` for a string, which is never empty, and `range` for a range, whose `text` is undefined for kept text. A consumer that wants an array of pieces collects them in its sink:
 
-				for (const block of sfc.customBlocks) {
-					if (block.type === 'more-script') {
-						s.push([
-							block.content, // text to add
-							block.name, // source
-							0, // content offset in source
-							{
-								// language capabilities to enable in this segment
-								hover: true,
-								references: true,
-								definition: true,
-								diagnostic: true,
-								rename: true,
-								completion: true,
-								semanticTokens: true,
-							},
-						]);
-						toString(s); // 'var answer = 42;console.log( answer )'
-					}
-				}
-			}
-		}
-	};
-};
-module.exports = plugin;
+```ts
+const pieces: Piece<string, string>[] = [];
+slice.render({
+	text: text => pieces.push(text),
+	range: (source, start, end, data, text) => pieces.push(text === undefined ? { source, start, end, data } : { source, start, end, data, text }),
+});
 ```
