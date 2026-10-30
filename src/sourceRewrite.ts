@@ -433,7 +433,6 @@ function renderCut<Source, Data>(cut: Cut<Source, Data>, walker: Walker<Source, 
 		}
 		return;
 	}
-	const { pos, removal } = walker;
 	walker.seek(start);
 	for (const edits of writers) {
 		next.push(start === 0 && cut === roots[0] ? 0 : edits.lowerBound(start, 0));
@@ -457,8 +456,6 @@ function renderCut<Source, Data>(cut: Cut<Source, Data>, walker: Walker<Source, 
 	if (end === rewrite.text.length && cut === roots[roots.length - 1]) {
 		renderEdits(writers, next, Infinity, walker, data, false);
 	}
-	walker.pos = pos;
-	walker.removal = removal;
 }
 
 /**
@@ -530,7 +527,7 @@ function renderCode<Source, Data>(code: RewriteCode<Source, Data>, walker: Walke
 		}
 	}
 	else if (isSlice(code)) {
-		renderCut(code as Cut<Source, Data>, walker);
+		code.render(walker.sink);
 	}
 	else {
 		const piece = code as Exclude<Piece<Source, Data>, string>;

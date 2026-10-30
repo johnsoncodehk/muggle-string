@@ -225,6 +225,31 @@ describe('scenarios', () => {
 			['range', s, 1, 2, 'body', undefined],
 		]);
 	});
+
+	test('a slice of another rewrite renders the text and edits of its own rewrite', () => {
+		const inner = createSourceRewrite<string, string>(other, 'xyz');
+		inner.writer(0).replace(1, 2, 'Y');
+		const slice = inner.core.cut(0, 3, { data: 'inner' });
+		const rewrite = createSourceRewrite<string, string>(s, 'abc');
+		rewrite.writer(0).replace(0, 1, 'A');
+		const body = rewrite.core.cut(0, 3, { data: 'body' });
+		rewrite.core.insertAfter(2, slice);
+		expect(collect(body)).toEqual([
+			'A',
+			{ source: s, start: 1, end: 2, data: 'body' },
+			{ source: other, start: 0, end: 1, data: 'inner' },
+			'Y',
+			{ source: other, start: 2, end: 3, data: 'inner' },
+			{ source: s, start: 2, end: 3, data: 'body' },
+		]);
+	});
+
+	test('a slice is any code that renders, and renders through its own render', () => {
+		const rewrite = createSourceRewrite<string, string>(s, 'ab');
+		const body = rewrite.core.cut(0, 2, { data: 'body' });
+		rewrite.core.insertAfter(1, [{ render: sink => sink.text('x') }, { render() {} }]);
+		expect(render(rewrite, body)).toBe('axb');
+	});
 });
 
 describe('order', () => {
