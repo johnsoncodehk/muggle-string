@@ -1,0 +1,63 @@
+# Publishes the package at the HEAD of the selected branch to npm. Run it from
+# the Actions tab after the version commit is pushed. A prerelease version goes
+# to dist-tag next from any branch; any other version goes to latest, from
+# master only.
+#
+# npm authenticates with trusted publishing (OIDC) and adds provenance. The
+# npm trusted publisher is bound to this filename, and a dispatch runs the
+# workflow file of the selected branch, so every release branch carries this
+# same file.
+
+name: release
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  release:
+    if: github.triggering_actor == 'johnsoncodehk'
+    concurrency:
+      group: release
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # npm trusted publishing / provenance
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 8
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      # trusted publishing needs npm 11.5.1 or later
+      - run: npm install -g npm@latest
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm run build
+
+      - run: pnpm run test
+
+      - name: Publish
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if [[ "$version" == *-* ]]; then
+            dist_tag=next
+          elif [[ "$GITHUB_REF" == refs/heads/master ]]; then
+            dist_tag=latest
+          else
+            echo "::error::$version is not a prerelease; latest is only published from master"
+            exit 1
+          fi
+          npm publish --provenance --access public --tag "$dist_tag"
+          echo "Published \`$version\` with dist-tag \`$dist_tag\`." >> "$GITHUB_STEP_SUMMARY"

@@ -1,9 +1,7 @@
 import { binarySearch } from "./binarySearch";
-import { offsetStack, resetOffsetStack } from "./track";
 import { Segment } from "./types";
 
 export * from './types';
-export * from './track';
 
 export function getLength(segments: Segment<any>[]) {
 	let length = 0;
@@ -27,9 +25,7 @@ export function replace<T extends Segment<any>>(segments: T[], pattern: string |
 	if (match && match.index !== undefined) {
 		const startOffset = match.index;
 		const endOffset = startOffset + match[0].length;
-		offsetStack();
 		replaceRange(segments, startOffset, endOffset, ...replacers.map(replacer => typeof replacer === 'function' ? replacer(match[0], match) : replacer));
-		resetOffsetStack();
 	}
 }
 
@@ -42,9 +38,7 @@ export function replaceAll<T extends Segment<any>>(segments: T[], pattern: RegEx
 		if (match.index !== undefined) {
 			const startOffset = match.index + lengthDiff;
 			const endOffset = startOffset + match[0].length;
-			offsetStack();
 			replaceRange(segments, startOffset, endOffset, ...replacers.map(replacer => typeof replacer === 'function' ? replacer(match[0]) : replacer));
-			resetOffsetStack();
 			const newLength = getLength(segments);
 			lengthDiff += newLength - length;
 			length = newLength;
@@ -58,8 +52,8 @@ export function replaceSourceRange<T extends Segment<any>>(segments: T[], source
 			continue;
 		}
 		if (segment[1] === source) {
-			const segmentStart = typeof segment[2] === 'number' ? segment[2] : segment[2][0];
-			const segmentEnd = typeof segment[2] === 'number' ? segment[2] + segment[0].length : segment[2][1];
+			const segmentStart = segment[2];
+			const segmentEnd = segment[2] + segment[0].length;
 			if (segmentStart <= startOffset && segmentEnd >= endOffset) {
 				const inserts: T[] = [];
 				if (startOffset > segmentStart) {
@@ -72,9 +66,7 @@ export function replaceSourceRange<T extends Segment<any>>(segments: T[], source
 					inserts.push(trimSegmentStart(segment, endOffset - segmentEnd));
 				}
 				combineStrings(inserts);
-				offsetStack();
 				segments.splice(segments.indexOf(segment), 1, ...inserts);
-				resetOffsetStack();
 				return true;
 			}
 		}
@@ -102,18 +94,14 @@ export function replaceRange<T extends Segment<any>>(segments: T[], startOffset:
 		inserts.push(trimSegmentStart(endSegment, endOffset - endSegmentStart));
 	}
 	combineStrings(inserts);
-	offsetStack();
 	segments.splice(startIndex, endIndex - startIndex + 1, ...inserts);
-	resetOffsetStack();
 }
 
 function combineStrings<T extends Segment<any>>(segments: T[]) {
 	for (let i = segments.length - 1; i >= 1; i--) {
 		if (typeof segments[i] === 'string' && typeof segments[i - 1] === 'string') {
 			segments[i - 1] = (segments[i - 1] as string + segments[i] as string) as T;
-			offsetStack();
 			segments.splice(i, 1);
-			resetOffsetStack();
 		}
 	}
 }
@@ -122,15 +110,9 @@ function trimSegmentEnd<T extends Segment<any>>(segment: T, trimEnd: number) {
 	if (typeof segment === 'string') {
 		return segment.slice(0, trimEnd) as T;
 	}
-	const originalString = segment[0];
-	const originalRange = segment[2];
-	const newString = originalString.slice(0, trimEnd);
-	const newRange = typeof originalRange === 'number' ? originalRange : [originalRange[0], originalRange[1] - (originalString.length - newString.length)];
 	return [
-		newString,
-		segment[1],
-		newRange,
-		...segment.slice(3),
+		segment[0].slice(0, trimEnd),
+		...segment.slice(1),
 	] as T;
 }
 
@@ -138,26 +120,23 @@ function trimSegmentStart<T extends Segment<any>>(segment: T, trimStart: number)
 	if (typeof segment === 'string') {
 		return segment.slice(trimStart) as T;
 	}
-	const originalString = segment[0];
-	const originalRange = segment[2];
-	const newString = originalString.slice(trimStart);
 	if (trimStart < 0) {
-		trimStart += originalString.length;
+		trimStart += segment[0].length;
 	}
-	const newRange = typeof originalRange === 'number' ? originalRange + trimStart : [originalRange[0] + trimStart, originalRange[1]];
 	return [
-		newString,
+		segment[0].slice(trimStart),
 		segment[1],
-		newRange,
+		segment[2] + trimStart,
 		...segment.slice(3),
 	] as T;
 }
 
 function toOffsets(segments: Segment<any>[]) {
-	const offsets: number[] = [];
+	const offsets: number[] = new Array(segments.length);
 	let offset = 0;
-	for (const segment of segments) {
-		offsets.push(offset);
+	for (let i = 0; i < segments.length; i++) {
+		offsets[i] = offset;
+		const segment = segments[i];
 		offset += typeof segment == 'string' ? segment.length : segment[0].length;
 	}
 	return offsets;
