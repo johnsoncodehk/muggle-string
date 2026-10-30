@@ -2,7 +2,7 @@ Ranked, conflict-free rewrites of a source text, rendered as format-neutral segm
 
 muggle-string has no dependencies and knows no mapping format: a rewrite renders text and source runs to a sink, and the consumer turns them into whatever its tooling maps with.
 
-> 0.5 replaces the segment-array helpers of 0.4 (`replace`, `replaceSourceRange`, `toString`, ...). They are gone, not deprecated.
+> 1.0 replaces the segment-array helpers of 0.4 (`replace`, `replaceSourceRange`, `toString`, ...). They are gone, not deprecated.
 
 ## Model
 
