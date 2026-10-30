@@ -2,7 +2,7 @@ import type { Piece } from './types';
 
 /** Generated code: text, pieces, and slices, which render their cut in place. */
 export type RewriteCode<Source, Data> =
-	| Piece<Source, Data>
+	| Piece<{ source: Source; data: Data }>
 	| RewriteSlice<Source, Data>
 	| readonly RewriteCode<Source, Data>[];
 
@@ -535,7 +535,7 @@ function renderCode<Source, Data>(code: RewriteCode<Source, Data>, sink: PieceSi
 		code.render(sink);
 	}
 	else {
-		const piece = code as Exclude<Piece<Source, Data>, string>;
+		const piece = code as Exclude<Piece<{ source: Source; data: Data }>, string>;
 		sink.range(piece.source, piece.start, piece.end, piece.data, piece.text);
 	}
 }

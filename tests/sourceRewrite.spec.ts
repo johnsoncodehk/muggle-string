@@ -14,6 +14,8 @@ const s = 's';
 const setup = 'setup';
 const other = 'other';
 
+type TestPiece = Piece<{ source: string; data: string }>;
+
 /** The source and text of each rewrite, which kept pieces copy. */
 const sources = new Map<SourceRewrite<string, string>, { source: string; text: string }>();
 
@@ -25,7 +27,7 @@ function createRewrite(source: string, text: string) {
 
 /** The pieces of `slice`: text, and kept source ranges with the data of their cut. */
 function collect(slice: RewriteSlice<string, string>) {
-	const pieces: Piece<string, string>[] = [];
+	const pieces: TestPiece[] = [];
 	slice.render({
 		text: text => pieces.push(text),
 		range: (source, start, end, data, text) =>
@@ -35,7 +37,7 @@ function collect(slice: RewriteSlice<string, string>) {
 }
 
 /** The text of `pieces`, whose kept pieces copy the text of `rewrite`. */
-function toText(rewrite: SourceRewrite<string, string>, pieces: Piece<string, string>[]) {
+function toText(rewrite: SourceRewrite<string, string>, pieces: TestPiece[]) {
 	const { source, text } = sources.get(rewrite)!;
 	return pieces.map(piece =>
 		typeof piece === 'string'
@@ -70,7 +72,7 @@ function keptOffsets(length: number, removals: readonly [number, number][]) {
 }
 
 /** Every kept piece is a copy, not empty; returns the source offsets of the rendered chars, in output order. */
-function renderedOffsets(rewrite: SourceRewrite<string, string>, pieces: Piece<string, string>[]) {
+function renderedOffsets(rewrite: SourceRewrite<string, string>, pieces: TestPiece[]) {
 	return pieces.flatMap(piece => {
 		if (typeof piece === 'string') {
 			return [];
@@ -83,7 +85,7 @@ function renderedOffsets(rewrite: SourceRewrite<string, string>, pieces: Piece<s
 }
 
 /** No kept piece continues the one right before it with the same data: a run is split only where something is. */
-function expectMinimalRuns(pieces: Piece<string, string>[]) {
+function expectMinimalRuns(pieces: TestPiece[]) {
 	for (let index = 1; index < pieces.length; index++) {
 		const previous = pieces[index - 1]!;
 		const piece = pieces[index]!;

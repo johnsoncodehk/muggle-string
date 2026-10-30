@@ -42,12 +42,14 @@ file.render({
 ## Pieces
 
 ```ts
-type Piece<Source, Data> = string | { source: Source; start: number; end: number; data: Data; text?: string };
+type Piece<Origin = unknown> = string | (Origin & { start: number; end: number; text?: string });
 ```
 
-A string is new text, which maps nowhere. An object is the range `start`..`end` of the text of `source`: without `text` it copies the text there, and with `text` it is code that stands for the range, mapped as the consumer of the pieces decides. The kept text of a rewrite renders as pieces without `text`, with the data of the cut that owns them.
+A string is new text, which maps nowhere. An object is the range `start`..`end` of a source text: without `text` it copies the text there, and with `text` it is code that stands for the range, mapped as the consumer of the pieces decides.
 
-Code is a piece, a slice, which renders its cut in place, or an array of code.
+`Origin` is what a range carries beyond its offsets. A producer of one source and no data, such as [muggle-pug](https://github.com/johnsoncodehk/muggle-pug), emits `Piece`, whose ranges are only offsets: its consumer knows the source. The code of a rewrite can mix sources, so its pieces are `Piece<{ source: Source; data: Data }>`, and its kept text renders as ranges without `text`, with the data of the cut that owns them.
+
+Code is a piece of a rewrite, a slice, which renders its cut in place, or an array of code.
 
 ## Rendering
 
@@ -61,7 +63,7 @@ interface PieceSink<Source, Data> {
 `slice.render(sink)` passes the pieces of the slice to `sink` in order, as arguments rather than objects: `text` for a string, which is never empty, and `range` for a range, whose `text` is undefined for kept text. A consumer that wants an array of pieces collects them in its sink:
 
 ```ts
-const pieces: Piece<string, string>[] = [];
+const pieces: Piece<{ source: string; data: string }>[] = [];
 slice.render({
 	text: text => pieces.push(text),
 	range: (source, start, end, data, text) => pieces.push(text === undefined ? { source, start, end, data } : { source, start, end, data, text }),
