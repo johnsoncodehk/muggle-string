@@ -17,24 +17,29 @@ muggle-string has no dependencies and knows no mapping format: a rewrite renders
 ## Usage
 
 ```ts
-import { createSourceRewrite, type MappedSegment, type Segment } from 'muggle-string';
+import { createSourceRewrite, type Segment } from 'muggle-string';
 
-const text = 'const props = defineProps<{ a: string }>();';
-const rewrite = createSourceRewrite<string, string>('setup', text);
+const text = 'log(name);\nconst name = "Ada";\n';
+const rewrite = createSourceRewrite<string, string>('main.js', text);
 const { core } = rewrite;
+const renamer = rewrite.writer(0);
 
-const body = core.cut(0, text.length, { data: 'body' });
-const typeArg = core.cut(text.indexOf('{'), text.lastIndexOf('}') + 1, { data: 'alias', placeholder: '__VLS_Props' });
-core.insertBefore(0, () => ['type __VLS_Props = ', typeArg, ';\n']);
+for (const { index } of text.matchAll(/\bname\b/g)) {
+	renamer.replace(index, index + 'name'.length, 'user');
+}
+
+const file = core.cut(0, text.length, { data: 'file' });
+const declaration = core.cut(text.indexOf('const'), text.length, { data: 'declaration' });
+core.insertBefore(0, () => [declaration]);
 
 const segments: Segment<string, string>[] = [];
-body.render({
+file.render({
 	text: text => segments.push(text),
 	source: (rewrite, start, end, data) => segments.push([rewrite.text.slice(start, end), rewrite.source, start, data]),
-	segment: (segment: MappedSegment<string, string>) => segments.push(segment),
+	segment: segment => segments.push(segment),
 });
-// type __VLS_Props = { a: string };
-// const props = defineProps<__VLS_Props>();
+// const user = "Ada";
+// log(user);
 ```
 
 Code is a string, or a function, called at most once and only if the code renders, that yields strings, mapped segments, and slices.
