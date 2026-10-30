@@ -11,7 +11,7 @@ muggle-string has no dependencies and knows no mapping format: a rewrite renders
 - Removals add up, so edits of different writers never conflict.
 - Text moves only by `cut(start, end, { data, placeholder })`, which every writer has. The cuts of all writers are nested or disjoint. A cut renders its text, with the edits of all writers in it, wherever its slice is placed, exactly once; the cut around it renders `placeholder` instead.
 - Code at the head or tail of a cut belongs to the outermost cut that has that edge.
-- `order` sorts the entries of one writer at one side of one char; equal keys keep call order.
+- The entries of one writer at one side of one char keep call order; code that must go outside them comes from a writer of a higher rank.
 - The first render freezes the rewrite.
 
 ## Usage

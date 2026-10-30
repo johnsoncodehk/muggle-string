@@ -228,23 +228,15 @@ describe('scenarios', () => {
 });
 
 describe('order', () => {
-	test('order keys make one side of a char LIFO for decreasing keys and FIFO for equal ones', () => {
+	test('the entries of one writer at one side of a char keep call order', () => {
 		const rewrite = createSourceRewrite<string, string>(s, 'abc');
 		const { core } = rewrite;
 		const body = core.cut(0, 3, { data: 'body' });
 		core.insertAfter(1, 'A');
-		core.insertAfter(1, 'B', { order: -1 });
+		core.insertBefore(2, 'B');
 		core.insertAfter(1, 'C');
-		core.insertAfter(1, 'D', { order: -2 });
-		expect(render(rewrite, body)).toBe('aDBACbc');
-	});
-
-	test('an order key orders the entries of one rank only', () => {
-		const rewrite = createSourceRewrite<string, string>(s, 'abc');
-		const body = rewrite.core.cut(0, 3, { data: 'body' });
-		rewrite.writer(0).insertBefore(1, 'p0', { order: 1e9 });
-		rewrite.writer(1).insertBefore(1, 'p1', { order: -1e9 });
-		expect(render(rewrite, body)).toBe('ap1p0bc');
+		core.insertBefore(2, 'D');
+		expect(render(rewrite, body)).toBe('aACbBDc');
 	});
 
 	test('the order at a char: before by rank descending, replacement, the char, after by rank ascending', () => {
@@ -261,11 +253,6 @@ describe('order', () => {
 		rewrite.core.insertAfter(2, '>c');
 		expect(render(rewrite, body)).toBe('a<c<1<0R0R1>0>1>cc');
 	});
-
-	test('a non-number order key is an error', () => {
-		const rewrite = createSourceRewrite<string, string>(s, 'abc');
-		expect(() => rewrite.core.insertBefore(1, 'x', { order: Number.NaN })).toThrow('is not a number');
-	});
 });
 
 describe('block edges', () => {
@@ -274,7 +261,7 @@ describe('block edges', () => {
 		const { core } = rewrite;
 		const body = core.cut(0, 8, { data: 'body' });
 		const last = core.cut(5, 8, { data: 'last' });
-		core.insertAfter(0, last, { order: Infinity });
+		core.insertAfter(0, last);
 		core.insertBefore(8, 'X');
 		core.insertAfter(8, 'Y');
 		expect(render(rewrite, body)).toBe('fghYabcdeX');

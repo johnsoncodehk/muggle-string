@@ -6,6 +6,7 @@
 
 - `RewriteSlice.pieces(out?)` is replaced by `RewriteSlice.render(sink)`. A render passes each piece to `sink.text(text)` or `sink.range(source, start, end, data, text)` instead of appending a piece object to an array; collecting an array is one sink (see the README). A range piece passed as code reaches the sink as its fields, not as the same object.
 - `rewrite.writer(rank)` returns the same writer for the same rank.
+- The `order` option of `insertBefore`, `insertAfter` and `replace`, and the `InsertOptions` type, are removed. The entries of one writer at one side of one char keep call order; code that must go outside them comes from a writer of a higher rank.
 
 ### Performance
 

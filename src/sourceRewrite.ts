@@ -6,11 +6,6 @@ export type RewriteCode<Source, Data> =
 	| RewriteSlice<Source, Data>
 	| readonly RewriteCode<Source, Data>[];
 
-export interface InsertOptions {
-	/** Ascending among the entries of one writer at one side of one char; equal keys keep call order. Default 0. */
-	order?: number;
-}
-
 export interface CutOptions<Source, Data> {
 	/** The data of the kept pieces of the cut. */
 	data: Data;
@@ -23,14 +18,14 @@ export interface RewriteWriter<Source, Data> {
 	 * `code` right before the text that starts at `offset`; it goes wherever that text goes. At the end of the text,
 	 * no text starts there: the code stays after all text.
 	 */
-	insertBefore(offset: number, code: RewriteCode<Source, Data>, options?: InsertOptions): void;
+	insertBefore(offset: number, code: RewriteCode<Source, Data>): void;
 	/**
 	 * `code` right after the text that ends at `offset`; it goes wherever that text goes. At 0, no text ends there: the
 	 * code stays before all text.
 	 */
-	insertAfter(offset: number, code: RewriteCode<Source, Data>, options?: InsertOptions): void;
+	insertAfter(offset: number, code: RewriteCode<Source, Data>): void;
 	/** The text at `start`..`end` (not empty) is not rendered; `code` takes the place of its first char. */
-	replace(start: number, end: number, code: RewriteCode<Source, Data>, options?: InsertOptions): void;
+	replace(start: number, end: number, code: RewriteCode<Source, Data>): void;
 	/**
 	 * The text at `start`..`end`, with the edits of all writers in it, rendered where the returned slice is placed,
 	 * exactly once. In the cut that contains it, `placeholder` takes its place. The cuts of all writers are nested or
@@ -89,28 +84,20 @@ class Edits<Source, Data> {
 	/** The keys of the edits, as many as `code`. */
 	keys = new Int32Array(16);
 	code: RewriteCode<Source, Data>[] = [];
-	/** The orders that are not 0, by edit. */
-	orders: Map<number, number> | undefined;
 	/** Whether the edits arrived in render order. */
 	sorted = true;
-	lastOrder = 0;
 	/** The writer that adds the edits. */
 	writer!: RewriteWriter<Source, Data>;
 
 	constructor(readonly rank: number) {}
 
-	add(at: number, side: Side, order: number, code: RewriteCode<Source, Data>) {
+	add(at: number, side: Side, code: RewriteCode<Source, Data>) {
 		let keys = this.keys;
 		const size = this.code.length;
 		const key = at * 4 + side;
-		const last = size ? keys[size - 1]! : -Infinity;
-		if (key < last || key === last && order < this.lastOrder) {
+		if (size && key < keys[size - 1]!) {
 			this.sorted = false;
 		}
-		if (order !== 0) {
-			(this.orders ??= new Map()).set(size, order);
-		}
-		this.lastOrder = order;
 		if (size === keys.length) {
 			keys = new Int32Array(size * 2);
 			keys.set(this.keys);
@@ -142,13 +129,13 @@ class Edits<Source, Data> {
 		if (this.sorted) {
 			return;
 		}
-		const { keys, code, orders } = this;
+		const { keys, code } = this;
 		const size = code.length;
 		const sorted: number[] = [];
 		for (let index = 0; index < size; index++) {
 			sorted.push(index);
 		}
-		sorted.sort((a, b) => keys[a]! - keys[b]! || (orders ? compareOrders(orders, a, b) : 0) || a - b);
+		sorted.sort((a, b) => keys[a]! - keys[b]! || a - b);
 		const sortedKeys = new Int32Array(size);
 		const sortedCode: RewriteCode<Source, Data>[] = [];
 		for (let index = 0; index < size; index++) {
@@ -157,14 +144,7 @@ class Edits<Source, Data> {
 		}
 		this.keys = sortedKeys;
 		this.code = sortedCode;
-		this.orders = undefined;
 	}
-}
-
-function compareOrders(orders: Map<number, number>, a: number, b: number) {
-	const orderA = orders.get(a) ?? 0;
-	const orderB = orders.get(b) ?? 0;
-	return orderA < orderB ? -1 : orderA > orderB ? 1 : 0;
 }
 
 class Rewrite<Source, Data> implements SourceRewrite<Source, Data> {
@@ -201,20 +181,20 @@ class Rewrite<Source, Data> implements SourceRewrite<Source, Data> {
 		const edits = new Edits<Source, Data>(rank);
 		this.edits.set(rank, edits);
 		edits.writer = {
-			insertBefore: (offset, code, options) => {
+			insertBefore: (offset, code) => {
 				this.check(offset, offset);
-				edits.add(offset, offset === this.text.length ? Side.After : Side.Before, getOrder(options), code);
+				edits.add(offset, offset === this.text.length ? Side.After : Side.Before, code);
 			},
-			insertAfter: (offset, code, options) => {
+			insertAfter: (offset, code) => {
 				this.check(offset, offset);
-				edits.add(offset ? offset - 1 : -1, offset ? Side.After : Side.Before, getOrder(options), code);
+				edits.add(offset ? offset - 1 : -1, offset ? Side.After : Side.Before, code);
 			},
-			replace: (start, end, code, options) => {
+			replace: (start, end, code) => {
 				this.check(start, end);
 				if (start === end) {
 					throw new RangeError(`The replace at ${start}..${end} removes no char.`);
 				}
-				edits.add(start, Side.Slot, getOrder(options), code);
+				edits.add(start, Side.Slot, code);
 				this.addRemoval(start, end);
 			},
 			cut: (start, end, { data, placeholder }) => {
@@ -359,14 +339,6 @@ class Rewrite<Source, Data> implements SourceRewrite<Source, Data> {
 		this.removals = removals;
 		this.removalsSize = merged;
 	}
-}
-
-function getOrder(options: InsertOptions | undefined) {
-	const order = options?.order ?? 0;
-	if (typeof order !== 'number' || Number.isNaN(order)) {
-		throw new TypeError(`The order ${order} is not a number.`);
-	}
-	return order;
 }
 
 class Cut<Source, Data> implements RewriteSlice<Source, Data> {
