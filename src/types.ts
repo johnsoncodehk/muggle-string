@@ -1,7 +1,5 @@
-declare const NO_DATA_SYMBOL: unique symbol;
+/** Generated code: plain text, or text that maps to `sourceOffset` of `source`. */
+export type Segment<Source, Data> = string | [text: string, source: Source, sourceOffset: number, data: Data];
 
-export type Segment<T = typeof NO_DATA_SYMBOL> = string | (
-	T extends typeof NO_DATA_SYMBOL ?
-	[text: string, source: string | undefined, sourceOffset: number] :
-	[text: string, source: string | undefined, sourceOffset: number, data: T]
-);
+/** A segment of generated code that maps to a source. */
+export type MappedSegment<Source, Data> = Exclude<Segment<Source, Data>, string>;

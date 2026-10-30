@@ -6,20 +6,21 @@ jobs:
 
     strategy:
       matrix:
-        node-version: [18.x]
+        node-version: [24.x]
         os: [macos-latest, windows-latest, ubuntu-latest]
 
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
 
-      # install node
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 8
+
       - name: Use Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v1
+        uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
 
-      # install pnpm
-      - run: npm i -g pnpm
       - run: pnpm install --frozen-lockfile
-      - run: npx tsc
+      - run: pnpm run build
       - run: pnpm run test

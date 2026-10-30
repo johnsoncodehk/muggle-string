@@ -1,72 +1,40 @@
-This library aims to provide codegen helpers and data structure for Vue language plugin API v1.x that does not depend on Volar runtime.
+Ranked, conflict-free rewrites of a source text, rendered as format-neutral segments.
 
-## Why "Muggle"?
+muggle-string has no dependencies and knows no mapping format: a rewrite renders text and source runs to a sink, and the consumer turns them into whatever its tooling maps with.
 
-A better situation is Volar can use magic-string on the Vue plugin API, but currently can't do this easily.
+> 0.5 replaces the segment-array helpers of 0.4 (`replace`, `replaceSourceRange`, `toString`, ...). They are gone, not deprecated.
 
-This solution is just for Vue language plugin API v1.x and planned to be deprecate in v2.
+## Model
+
+- Writers have ranks. A higher rank sits outside a lower one, and `core` sits outside all.
+- `insertBefore(offset, code)` and `insertAfter(offset, code)` attach code to a side of a char, so it goes wherever that char goes. `replace(start, end, code)` removes the text and puts `code` in the place of its first char.
+- Removals add up, so edits of different writers never conflict.
+- Only `core` moves text, with `cut(start, end, { data, placeholder })`. Cuts are nested or disjoint. A cut renders its text, with the edits of all writers in it, wherever its slice is placed, exactly once; the cut around it renders `placeholder` instead.
+- Code at the head or tail of a cut belongs to the outermost cut that has that edge.
+- `order` sorts the entries of one writer at one side of one char; equal keys keep call order.
+- The first render freezes the rewrite.
 
 ## Usage
 
-The example is base-on [magic-string readme](https://github.com/rich-harris/magic-string#usage).
-
-```html
-<script>problems = 99</script>
-
-<more-script lang="js">console.log( answer )</more-script>
-```
-
 ```ts
-import {
-	toString,
-	replace,
-} from 'muggle-string';
+import { createSourceRewrite, type MappedSegment, type Segment } from 'muggle-string';
 
-/** @type {import('@volar/vue-language-core').VueLanguagePlugin} */
-const plugin = () => {
-	return {
-		name: 'example-vue-language-plugin',
-		version: 1,
-		resolveEmbeddedFile(fileName, sfc, embeddedFile) {
-			if (embeddedFile.fileName.replace(fileName, '').match(/^\.(js|ts|jsx|tsx)$/)) {
+const text = 'const props = defineProps<{ a: string }>();';
+const rewrite = createSourceRewrite<string, string>('setup', text);
+const { core } = rewrite;
 
-				const s = embeddedFile.content;
-				toString(s); // 'problems = 99'
+const body = core.cut(0, text.length, { data: 'body' });
+const typeArg = core.cut(text.indexOf('{'), text.lastIndexOf('}') + 1, { data: 'alias', placeholder: '__VLS_Props' });
+core.insertBefore(0, () => ['type __VLS_Props = ', typeArg, ';\n']);
 
-				replace(s, 'problems', 'answer');
-				toString(s); // 'answer = 99'
-
-				replace(s, '99', '42');
-				toString(s); // 'answer = 42'
-
-				// add string by Array method directly
-				s.unshift('var ');
-				s.push(';');
-				toString(s); // 'var answer = 42;'
-
-				for (const block of sfc.customBlocks) {
-					if (block.type === 'more-script') {
-						s.push([
-							block.content, // text to add
-							block.name, // source
-							0, // content offset in source
-							{
-								// language capabilities to enable in this segment
-								hover: true,
-								references: true,
-								definition: true,
-								diagnostic: true,
-								rename: true,
-								completion: true,
-								semanticTokens: true,
-							},
-						]);
-						toString(s); // 'var answer = 42;console.log( answer )'
-					}
-				}
-			}
-		}
-	};
-};
-module.exports = plugin;
+const segments: Segment<string, string>[] = [];
+body.render({
+	text: text => segments.push(text),
+	source: (rewrite, start, end, data) => segments.push([rewrite.text.slice(start, end), rewrite.source, start, data]),
+	segment: (segment: MappedSegment<string, string>) => segments.push(segment),
+});
+// type __VLS_Props = { a: string };
+// const props = defineProps<__VLS_Props>();
 ```
+
+Code is a string, or a function, called at most once and only if the code renders, that yields strings, mapped segments, and slices.

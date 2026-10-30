@@ -1,7 +1,9 @@
 {
 	"name": "muggle-string",
 	"version": "0.4.1",
+	"description": "Ranked, conflict-free rewrites of a source text, rendered as format-neutral segments",
 	"main": "out/index.js",
+	"types": "out/index.d.ts",
 	"license": "MIT",
 	"files": [
 		"out/**/*.js",
@@ -12,11 +14,12 @@
 		"url": "https://github.com/johnsoncodehk/muggle-string.git"
 	},
 	"scripts": {
+		"build": "tsc",
 		"test": "vitest run"
 	},
 	"devDependencies": {
-		"typescript": "latest",
-		"vitest": "latest",
-		"vite": "latest"
+		"@types/node": "^26.0.1",
+		"typescript": "7.1.0-beta",
+		"vitest": "latest"
 	}
 }
