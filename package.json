@@ -1,7 +1,7 @@
 {
 	"name": "muggle-string",
 	"version": "1.0.0-alpha.0",
-	"description": "Ranked, conflict-free rewrites of a source text, rendered as format-neutral segments",
+	"description": "Ranked, conflict-free rewrites of a source text, rendered as format-neutral pieces",
 	"main": "out/index.js",
 	"types": "out/index.d.ts",
 	"license": "MIT",
