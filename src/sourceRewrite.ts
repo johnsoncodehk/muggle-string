@@ -50,18 +50,20 @@ export interface RewriteSlice<Source, Data> {
 
 /**
  * Edits of one source text by ranked writers. Inserts attach to a side of a char, removals add up, and text moves
- * only by nested cuts, so edits never conflict. The first render freezes the edits.
+ * only by nested cuts, so edits never conflict. The rewrite is itself the outermost writer. The first render freezes
+ * the edits.
  */
-export interface SourceRewrite<Source, Data> {
-	readonly source: Source;
-	readonly text: string;
-	readonly core: RewriteWriter<Source, Data>;
-	/** The writer of `rank`, a non-negative integer. A higher rank sits outside a lower one, and core outside all. */
+export interface SourceRewrite<Source, Data> extends RewriteWriter<Source, Data> {
+	/**
+	 * The writer of `rank`, a non-negative integer. A higher rank sits outside a lower one, and the rewrite outside
+	 * all.
+	 */
 	writer(rank: number): RewriteWriter<Source, Data>;
 }
 
 export function createSourceRewrite<Source, Data>(source: Source, text: string): SourceRewrite<Source, Data> {
-	return new Rewrite<Source, Data>(source, text);
+	const rewrite = new Rewrite<Source, Data>(source, text);
+	return { ...rewrite.core, writer: rank => rewrite.writer(rank) };
 }
 
 const coreRank = 0x7fffffff;
@@ -149,7 +151,8 @@ class Edits<Source, Data> {
 	}
 }
 
-class Rewrite<Source, Data> implements SourceRewrite<Source, Data> {
+class Rewrite<Source, Data> {
+	/** The writer of the outermost rank, which the rewrite is. */
 	readonly core: RewriteWriter<Source, Data>;
 	/** The edits of each writer, by rank. */
 	edits = new Map<number, Edits<Source, Data>>();
@@ -174,7 +177,7 @@ class Rewrite<Source, Data> implements SourceRewrite<Source, Data> {
 
 	writer(rank: number): RewriteWriter<Source, Data> {
 		if (!Number.isInteger(rank) || rank < 0 || rank >= coreRank) {
-			throw new RangeError(`The rank ${rank} is not a non-negative integer below the rank of core.`);
+			throw new RangeError(`The rank ${rank} is not a non-negative integer below the rank of the rewrite.`);
 		}
 		return (this.edits.get(rank) ?? this.createEdits(rank)).writer;
 	}

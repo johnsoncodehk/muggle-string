@@ -6,7 +6,7 @@ muggle-string has no dependencies and knows no mapping format: a rewrite renders
 
 ## Model
 
-- Writers have ranks. A higher rank sits outside a lower one, and `core` sits outside all.
+- The rewrite is itself a writer, and `rewrite.writer(rank)` gives the writer of a rank. A higher rank sits outside a lower one, and the rewrite sits outside all.
 - `insertBefore(offset, code)` and `insertAfter(offset, code)` attach code to a side of a char, so it goes wherever that char goes. `replace(start, end, code)` removes the text and puts `code` in the place of its first char.
 - Removals add up, so edits of different writers never conflict.
 - Text moves only by `cut(start, end, { data, placeholder })`, which every writer has. The cuts of all writers are nested or disjoint. A cut renders its text, with the edits of all writers in it, wherever its slice is placed, exactly once; the cut around it renders `placeholder` instead.
@@ -21,21 +21,19 @@ import { createSourceRewrite } from 'muggle-string';
 
 const text = 'log(name);\nconst name = "Ada";\n';
 const rewrite = createSourceRewrite<string, string>('main.js', text);
-const { core } = rewrite;
-const renamer = rewrite.writer(0);
 
 for (const { index } of text.matchAll(/\bname\b/g)) {
-	renamer.replace(index, index + 'name'.length, 'user');
+	rewrite.replace(index, index + 'name'.length, 'user');
 }
 
-const file = core.cut(0, text.length, { data: 'file' });
-const declaration = core.cut(text.indexOf('const'), text.length, { data: 'declaration' });
-core.insertBefore(0, declaration);
+const file = rewrite.cut(0, text.length, { data: 'file' });
+const declaration = rewrite.cut(text.indexOf('const'), text.length, { data: 'declaration' });
+rewrite.insertBefore(0, declaration);
 
 let output = '';
 file.render({
-	text: text => output += text,
-	range: (source, start, end, data, text) => output += text ?? rewrite.text.slice(start, end),
+	text: code => output += code,
+	range: (source, start, end, data, code) => output += code ?? text.slice(start, end),
 });
 // const user = "Ada";
 // log(user);
