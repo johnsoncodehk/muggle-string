@@ -324,9 +324,6 @@ class Rewrite<Source, Data> implements SourceRewrite<Source, Data> {
 			edits.sort();
 		}
 		this.mergeRemovals();
-		for (const root of this.roots) {
-			root.isRoot = true;
-		}
 	}
 
 	private mergeRemovals() {
@@ -375,7 +372,6 @@ function getOrder(options: InsertOptions | undefined) {
 class Cut<Source, Data> implements RewriteSlice<Source, Data> {
 	/** The cuts directly inside, sorted and disjoint. */
 	children: Cut<Source, Data>[] | undefined;
-	isRoot = false;
 	placed = false;
 
 	constructor(
@@ -452,8 +448,8 @@ function renderCut<Source, Data>(cut: Cut<Source, Data>, walker: Walker<Source, 
 	}
 	cut.placed = true;
 	const rewrite = cut.rewrite;
-	const writers = rewrite.writerEdits;
-	const { start, end, children, data, isRoot } = cut;
+	const { writerEdits: writers, roots } = rewrite;
+	const { start, end, children, data } = cut;
 	/** The next edit of each writer. */
 	const next: number[] = [];
 	if (start === end) {
@@ -468,7 +464,7 @@ function renderCut<Source, Data>(cut: Cut<Source, Data>, walker: Walker<Source, 
 	const { pos, removal } = walker;
 	walker.seek(start);
 	for (const edits of writers) {
-		next.push(isRoot && start === 0 ? 0 : edits.lowerBound(start, 0));
+		next.push(start === 0 && cut === roots[0] ? 0 : edits.lowerBound(start, 0));
 	}
 	for (let index = 0;; index++) {
 		const child = children?.[index];
@@ -486,7 +482,7 @@ function renderCut<Source, Data>(cut: Cut<Source, Data>, walker: Walker<Source, 
 		}
 	}
 	walker.keep(end, data);
-	if (isRoot && end === rewrite.text.length) {
+	if (end === rewrite.text.length && cut === roots[roots.length - 1]) {
 		renderEdits(writers, next, Infinity, walker, data, false);
 	}
 	walker.pos = pos;
