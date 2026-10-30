@@ -19,13 +19,13 @@ export function create(source: string): Segment[] {
 	return [[source, undefined, 0]];
 }
 
-export function replace<T extends Segment<any>>(segments: T[], pattern: string | RegExp, ...replacers: (T | ((match: string) => T))[]) {
+export function replace<T extends Segment<any>>(segments: T[], pattern: string | RegExp, ...replacers: (T | ((match: string, matches: RegExpMatchArray) => T))[]) {
 	const str = toString(segments);
 	const match = str.match(pattern);
 	if (match && match.index !== undefined) {
 		const startOffset = match.index;
 		const endOffset = startOffset + match[0].length;
-		replaceRange(segments, startOffset, endOffset, ...replacers.map(replacer => typeof replacer === 'function' ? replacer(match[0]) : replacer));
+		replaceRange(segments, startOffset, endOffset, ...replacers.map(replacer => typeof replacer === 'function' ? replacer(match[0], match) : replacer));
 	}
 }
 
