@@ -86,7 +86,8 @@ const enum Side {
  * text, and `insertBefore(length)` after the char `length`, so it renders after all text.
  */
 class Edits<Source, Data> {
-	keys: number[] = [];
+	/** The keys of the edits, as many as `code`. */
+	keys = new Int32Array(16);
 	code: RewriteCode<Source, Data>[] = [];
 	/** The orders that are not 0, by edit. */
 	orders: Map<number, number> | undefined;
@@ -97,17 +98,23 @@ class Edits<Source, Data> {
 	constructor(readonly rank: number) {}
 
 	add(at: number, side: Side, order: number, code: RewriteCode<Source, Data>) {
-		const keys = this.keys;
+		let keys = this.keys;
+		const size = this.code.length;
 		const key = at * 4 + side;
-		const last = keys.length ? keys[keys.length - 1]! : -Infinity;
+		const last = size ? keys[size - 1]! : -Infinity;
 		if (key < last || key === last && order < this.lastOrder) {
 			this.sorted = false;
 		}
 		if (order !== 0) {
-			(this.orders ??= new Map()).set(keys.length, order);
+			(this.orders ??= new Map()).set(size, order);
 		}
 		this.lastOrder = order;
-		keys.push(key);
+		if (size === keys.length) {
+			keys = new Int32Array(size * 2);
+			keys.set(this.keys);
+			this.keys = keys;
+		}
+		keys[size] = key;
 		this.code.push(code);
 	}
 
@@ -115,7 +122,7 @@ class Edits<Source, Data> {
 	lowerBound(offset: number, low: number) {
 		const keys = this.keys;
 		const key = offset * 4;
-		let high = keys.length;
+		let high = this.code.length;
 		while (low < high) {
 			const mid = (low + high) >>> 1;
 			if (keys[mid]! < key) {
@@ -134,16 +141,16 @@ class Edits<Source, Data> {
 			return;
 		}
 		const { keys, code, orders } = this;
-		const size = keys.length;
+		const size = code.length;
 		const sorted: number[] = [];
 		for (let index = 0; index < size; index++) {
 			sorted.push(index);
 		}
 		sorted.sort((a, b) => keys[a]! - keys[b]! || (orders ? compareOrders(orders, a, b) : 0) || a - b);
-		const sortedKeys: number[] = [];
+		const sortedKeys = new Int32Array(size);
 		const sortedCode: RewriteCode<Source, Data>[] = [];
 		for (let index = 0; index < size; index++) {
-			sortedKeys.push(keys[sorted[index]!]!);
+			sortedKeys[index] = keys[sorted[index]!]!;
 			sortedCode.push(code[sorted[index]!]!);
 		}
 		this.keys = sortedKeys;
@@ -312,7 +319,7 @@ class Rewrite<Source, Data> implements SourceRewrite<Source, Data> {
 			return;
 		}
 		this.frozen = true;
-		this.writerEdits = this.writerEdits.filter(edits => edits.keys.length);
+		this.writerEdits = this.writerEdits.filter(edits => edits.code.length);
 		for (const edits of this.writerEdits) {
 			edits.sort();
 		}
@@ -507,9 +514,9 @@ function renderEdits<Source, Data>(
 		// the first key of the other writers, up to which the best one renders its run
 		let bound = last;
 		for (let writer = 0; writer < writers.length; writer++) {
-			const { keys, rank } = writers[writer]!;
+			const { keys, code, rank } = writers[writer]!;
 			const edit = next[writer]!;
-			if (edit < keys.length) {
+			if (edit < code.length) {
 				const key = keys[edit]!;
 				if (
 					key < bestKey || (key === bestKey && best !== -1 && (
@@ -540,7 +547,7 @@ function renderEdits<Source, Data>(
 			}
 			renderCode(code[edit++]!, walker);
 		}
-		while (edit < keys.length && keys[edit]! < bound);
+		while (edit < code.length && keys[edit]! < bound);
 		next[best] = edit;
 	}
 }
