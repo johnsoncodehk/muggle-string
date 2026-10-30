@@ -72,6 +72,17 @@ function renderedOffsets(rewrite: SourceRewrite<string, string>, pieces: Piece<s
 	});
 }
 
+/** No kept piece continues the one right before it with the same data: a run is split only where something is. */
+function expectMinimalRuns(pieces: Piece<string, string>[]) {
+	for (let index = 1; index < pieces.length; index++) {
+		const previous = pieces[index - 1]!;
+		const piece = pieces[index]!;
+		if (typeof previous !== 'string' && typeof piece !== 'string' && previous.text === undefined) {
+			expect(piece.text !== undefined || piece.data !== previous.data || piece.start !== previous.end).toBe(true);
+		}
+	}
+}
+
 function defineProps(text: string, statement = 'const') {
 	const rewrite = createSourceRewrite<string, string>(setup, text);
 	const { core } = rewrite;
@@ -446,7 +457,7 @@ describe('construction errors', () => {
 });
 
 describe('properties', () => {
-	test('random edits render every kept char once, in order and verbatim, and every code once', () => {
+	test('random edits render every kept char once, in order and verbatim, in the fewest runs, and every code once', () => {
 		const random = createRandom(1);
 		for (let iteration = 0; iteration < 20000; iteration++) {
 			const length = 1 + random(12);
@@ -482,6 +493,7 @@ describe('properties', () => {
 				tags.push(tag);
 			}
 			const segments = collect(root);
+			expectMinimalRuns(segments);
 			const offsets = renderedOffsets(rewrite, segments);
 			expect([...offsets].sort((a, b) => a - b)).toEqual(keptOffsets(length, removals));
 			const unmoved = offsets.filter(offset => !moved || offset < moved.start || moved.end <= offset);
@@ -531,7 +543,7 @@ describe('properties', () => {
 		}
 	});
 
-	test('random nested cuts render every kept char once and verbatim, every code once, edge code at the edges', () => {
+	test('random nested cuts render every kept char once and verbatim in the fewest runs, every code once, edge code at the edges', () => {
 		const random = createRandom(3);
 		let nested = 0;
 		for (let iteration = 0; iteration < 20000; iteration++) {
@@ -546,6 +558,7 @@ describe('properties', () => {
 			}
 			const rewrite = createSourceRewrite<string, string>(s, alphabet(length));
 			const segments = buildNestedCase(rewrite, testCase);
+			expectMinimalRuns(segments);
 			const offsets = renderedOffsets(rewrite, segments);
 			const removals = testCase.edits.flatMap(edit =>
 				edit.kind === 'replace' ? [[edit.start, edit.end] as [number, number]] : []
