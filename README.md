@@ -44,6 +44,6 @@ const pieces = file.pieces();
 type Piece<Source, Data> = string | { source: Source; start: number; end: number; data: Data; text?: string };
 ```
 
-A string is new text, which maps nowhere. An object is the range `start`..`end` of the text of `source`: without `text` it copies the text there, and with `text` it is code that maps to the range as a whole. The kept text of a rewrite renders as pieces without `text`, with the data of the cut that owns them.
+A string is new text, which maps nowhere. An object is the range `start`..`end` of the text of `source`: without `text` it copies the text there, and with `text` it is code that stands for the range, mapped as the consumer of the pieces decides. The kept text of a rewrite renders as pieces without `text`, with the data of the cut that owns them.
 
 Code is a piece, a slice, which renders its cut in place, or an array of code. `slice.pieces(out)` appends to `out` and returns it.
