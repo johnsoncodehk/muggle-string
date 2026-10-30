@@ -288,6 +288,9 @@ class Rewrite<Source, Data> implements SourceRewrite<Source, Data> {
 				}
 				cut.children = siblings.splice(first, after - first, cut);
 			}
+			else if (first === siblings.length) {
+				siblings.push(cut);
+			}
 			else {
 				siblings.splice(first, 0, cut);
 			}
