@@ -166,6 +166,8 @@ class Rewrite<Source, Data> implements SourceRewrite<Source, Data> {
 	/** Removed ranges as flat start, end pairs; sorted and merged when frozen. */
 	removals = new Int32Array(16);
 	removalsSize = 0;
+	/** Whether the removals arrived in order of start. */
+	removalsSorted = true;
 	/** The top-level cuts, sorted and disjoint. */
 	roots: Cut<Source, Data>[] = [];
 	/** The last inserted cut, where the descent of the next one starts if it contains it. */
@@ -239,6 +241,9 @@ class Rewrite<Source, Data> implements SourceRewrite<Source, Data> {
 
 	private addRemoval(start: number, end: number) {
 		const size = this.removalsSize;
+		if (size && start < this.removals[size - 2]!) {
+			this.removalsSorted = false;
+		}
 		if (size === this.removals.length) {
 			const removals = new Int32Array(size * 2);
 			removals.set(this.removals);
@@ -320,18 +325,18 @@ class Rewrite<Source, Data> implements SourceRewrite<Source, Data> {
 	private mergeRemovals() {
 		let removals = this.removals;
 		const pairs = this.removalsSize >> 1;
-		for (let pair = 1; pair < pairs; pair++) {
-			if (removals[2 * pair - 2]! > removals[2 * pair]!) {
-				const sorted = Array.from({ length: pairs }, (_, index) => index)
-					.sort((a, b) => removals[2 * a]! - removals[2 * b]!);
-				const copy = new Int32Array(2 * pairs);
-				for (let index = 0; index < pairs; index++) {
-					copy[2 * index] = removals[2 * sorted[index]!]!;
-					copy[2 * index + 1] = removals[2 * sorted[index]! + 1]!;
-				}
-				removals = copy;
-				break;
+		if (!this.removalsSorted) {
+			const sorted: number[] = [];
+			for (let pair = 0; pair < pairs; pair++) {
+				sorted.push(pair);
 			}
+			sorted.sort((a, b) => removals[2 * a]! - removals[2 * b]!);
+			const copy = new Int32Array(2 * pairs);
+			for (let index = 0; index < pairs; index++) {
+				copy[2 * index] = removals[2 * sorted[index]!]!;
+				copy[2 * index + 1] = removals[2 * sorted[index]! + 1]!;
+			}
+			removals = copy;
 		}
 		let merged = 0;
 		for (let pair = 0; pair < pairs; pair++) {
