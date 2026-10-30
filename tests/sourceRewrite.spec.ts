@@ -250,6 +250,16 @@ describe('scenarios', () => {
 		rewrite.core.insertAfter(1, [{ render: sink => sink.text('x') }, { render() {} }]);
 		expect(render(rewrite, body)).toBe('axb');
 	});
+
+	test('removals of two writers that overlap the edges of a moved cut remove the chars of both cuts', () => {
+		const rewrite = createSourceRewrite<string, string>(s, 'abcdefgh');
+		const { core } = rewrite;
+		const body = core.cut(0, 8, { data: 'body' });
+		core.insertAfter(8, core.cut(2, 6, { data: 'inner', placeholder: 'P' }));
+		rewrite.writer(0).replace(1, 4, 'X');
+		rewrite.writer(1).replace(3, 7, 'Y');
+		expect(render(rewrite, body)).toBe('aXPhY');
+	});
 });
 
 describe('order', () => {
@@ -262,6 +272,19 @@ describe('order', () => {
 		core.insertAfter(1, 'C');
 		core.insertBefore(2, 'D');
 		expect(render(rewrite, body)).toBe('aACbBDc');
+	});
+
+	test('edits and removals of one writer that arrive out of order render in order, equal keys in call order', () => {
+		const rewrite = createSourceRewrite<string, string>(s, 'abcdef');
+		const body = rewrite.core.cut(0, 6, { data: 'body' });
+		const writer = rewrite.writer(0);
+		writer.insertAfter(4, 'A');
+		writer.replace(4, 5, 'R');
+		writer.insertBefore(1, 'B');
+		writer.insertAfter(4, 'C');
+		writer.replace(1, 2, 'S');
+		writer.insertBefore(1, 'D');
+		expect(render(rewrite, body)).toBe('aBDScdACRf');
 	});
 
 	test('the order at a char: before by rank descending, replacement, the char, after by rank ascending', () => {
