@@ -1,4 +1,5 @@
 import { originalPositionFor, TraceMap, traceSegment } from '@jridgewell/trace-mapping';
+import { SourceMap as NodeSourceMap } from 'node:module';
 import { describe, expect, test } from 'vitest';
 import { createSourceRewrite, type Piece, renderWithSourceMap, rewritePieceText, type SourceMap } from '../src';
 
@@ -13,9 +14,14 @@ function render(pieces: TestPiece[]) {
 	return renderWithSourceMap<TestSource>(sink => pieces.forEach(sink), source => source.name);
 }
 
+function classOf(char: string) {
+	return /\s/.test(char) ? 'space' : /[\w$]|[^\x00-\x7f]/.test(char) ? 'word' : 'other';
+}
+
 /**
- * Where each generated char of `pieces` must map, by line and column: a kept char to itself, the `text` of a range to
- * the start of the range at the start of each of its lines but an empty last one, and anything else nowhere.
+ * Where each generated char of `pieces` must map, by line and column: a kept char at the start of its piece, its line,
+ * a word, a run of whitespace or as another char to itself, the `text` of a range to the start of the range at the
+ * start of each of its lines but an empty last one, anything else nowhere, and `undefined` where the char before it maps.
  */
 function expected(pieces: TestPiece[]) {
 	const result: ({ source: string; offset: number } | null)[][] = [[]];
@@ -31,7 +37,9 @@ function expected(pieces: TestPiece[]) {
 				line.push(null);
 			}
 			else if (piece.text === undefined) {
-				line.push({ source: piece.source.name, offset: piece.start + i });
+				const boundary = i === 0 || text[i - 1] === '\n' || classOf(text[i]!) !== classOf(text[i - 1]!)
+					|| classOf(text[i]!) === 'other';
+				line.push(boundary ? { source: piece.source.name, offset: piece.start + i } : undefined as never);
 			}
 			else {
 				const lineStart = i === 0 || text[i - 1] === '\n';
@@ -48,23 +56,30 @@ function offsetOf(map: SourceMap, source: string, line: number, column: number) 
 	return lines.slice(0, line).reduce((offset, text) => offset + text.length + 1, 0) + column;
 }
 
-/** Checks the map of `pieces` at every generated char against `expected`, by greatest lower bound. */
+/**
+ * Checks the map of `pieces` at every generated char against `expected`, as the greatest lower bound on the line of
+ * trace-mapping and the one across lines of Node, which reads a segment without a source as no original position.
+ */
 function check(pieces: TestPiece[]) {
 	const { text, map } = render(pieces);
 	expect(text).toBe(pieces.map(rewritePieceText).join(''));
 	const trace = new TraceMap(map as never);
+	const node = new NodeSourceMap(map);
 	expected(pieces).forEach((chars, line) => {
-		let inText: { source: string; offset: number } | null = null;
+		let before: { source: string; offset: number } | null = null;
 		chars.forEach((want, column) => {
 			const got = originalPositionFor(trace, { line: line + 1, column });
 			const at = got.source === null ? null : { source: got.source, offset: offsetOf(map, got.source, got.line - 1, got.column) };
+			const entry = node.findEntry(line, column) as { originalSource?: string; originalLine: number; originalColumn: number };
+			const nodeAt = entry.originalSource === undefined
+				? null
+				: { source: entry.originalSource, offset: offsetOf(map, entry.originalSource, entry.originalLine, entry.originalColumn) };
 			if (want === undefined) {
-				// a later char of a line of the text of a range maps where the line starts
-				expect(at, `${line}:${column}`).toEqual(inText);
-				return;
+				want = before!;
 			}
 			expect(at, `${line}:${column}`).toEqual(want);
-			inText = want;
+			expect(nodeAt, `node ${line}:${column}`).toEqual(want);
+			before = want;
 		});
 	});
 	return { text, map };
@@ -74,14 +89,14 @@ const main: TestSource = { name: 'main.js', content: 'const a = 1;\nlog(a);\n' }
 const other: TestSource = { name: 'other.js', content: 'x\ny\nz' };
 
 describe('renderWithSourceMap', () => {
-	test('kept text maps each char to itself, across lines', () => {
+	test('kept text maps at the start of each word, run of whitespace and other char, across lines', () => {
 		const { map } = check([{ source: main, start: 0, end: main.content.length }]);
 		expect(map).toEqual({
 			version: 3,
 			sources: ['main.js'],
 			sourcesContent: [main.content],
 			names: [],
-			mappings: 'AAAA,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC;AACX,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC;',
+			mappings: 'AAAA,KAAK,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC;AACX,GAAG,CAAC,CAAC,CAAC;',
 		});
 	});
 
@@ -93,9 +108,16 @@ describe('renderWithSourceMap', () => {
 		expect(traceSegment(trace, 0, 15)).toEqual([15, 0, 0, 5]);
 	});
 
-	test('new text at the start of a line maps nowhere without a segment', () => {
+	test('new text that starts a line maps nowhere by a segment without a source, so that no line before reaches it', () => {
 		const { map } = check([{ source: main, start: 0, end: 13 }, 'new\n', { source: main, start: 13, end: 21 }]);
-		expect(map.mappings.split(';')[1]).toBe('');
+		expect(map.mappings.split(';')[1]).toBe('A');
+	});
+
+	test('mappings that end with a segment without a source end with a line, which Node reads as no original position', () => {
+		const { map } = check([{ source: main, start: 0, end: 12 }, ' new']);
+		expect(map.mappings.endsWith(',C;')).toBe(true);
+		const { map: newLine } = check([{ source: main, start: 0, end: 13 }, 'new']);
+		expect(newLine.mappings.endsWith(';A;')).toBe(true);
 	});
 
 	test('the text of a range maps as a whole to its start, at each of its lines', () => {
@@ -108,7 +130,7 @@ describe('renderWithSourceMap', () => {
 
 	test('the text of a range that ends a line does not map the empty line after it', () => {
 		const { map } = check([{ source: main, start: 0, end: 12, text: 'replaced\n' }, 'new']);
-		expect(map.mappings).toBe('AAAA;');
+		expect(map.mappings).toBe('AAAA;A;');
 	});
 
 	test('empty text of a range maps nothing', () => {

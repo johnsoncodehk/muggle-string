@@ -11,11 +11,19 @@ export interface SourceMap {
 
 const base64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 
+const enum CharClass {
+	Space,
+	Word,
+	Other,
+}
+
 /**
  * The generated text of the pieces that `render` passes to its sink, and a v3 source map of it to their sources, which
- * `name` names, with their content, in the order that the pieces first reach them. Each kept char maps to itself; the
- * `text` of a range maps as a whole to the start of the range, at the start of each of its lines but an empty last
- * one; new text maps nowhere, and where it follows mapped text on a line, a segment without a source ends that mapping.
+ * `name` names, with their content, in the order that the pieces first reach them. Kept text maps to itself at the
+ * start of each piece, line, word, run of whitespace and other char, so a position at a token boundary maps exactly;
+ * the `text` of a range maps as a whole to the start of the range, at the start of each of its lines but an empty last
+ * one; new text maps nowhere, and where it starts a line or follows mapped text on one, a segment without a source
+ * ends the mapping before it.
  */
 export function renderWithSourceMap<Source extends RewriteSource>(
 	render: (sink: (piece: Piece<{ source: Source }>) => void) => void,
@@ -28,6 +36,7 @@ export function renderWithSourceMap<Source extends RewriteSource>(
 	let column = 0;
 	let lineHasSegment = false;
 	let lineEndsMapped = false;
+	let endsWithoutSource = false;
 	let lastColumn = 0;
 	let lastSource = 0;
 	let lastLine = 0;
@@ -44,6 +53,7 @@ export function renderWithSourceMap<Source extends RewriteSource>(
 		lastLine = line;
 		lastSourceColumn = sourceColumn;
 		lineEndsMapped = true;
+		endsWithoutSource = false;
 	};
 	const newLine = () => {
 		mappings += ';';
@@ -51,6 +61,7 @@ export function renderWithSourceMap<Source extends RewriteSource>(
 		lastColumn = 0;
 		lineHasSegment = false;
 		lineEndsMapped = false;
+		endsWithoutSource = false;
 	};
 	const advance = (code: string) => {
 		let lineStart = 0;
@@ -78,11 +89,22 @@ export function renderWithSourceMap<Source extends RewriteSource>(
 
 	render(piece => {
 		if (typeof piece === 'string') {
-			if (lineEndsMapped && piece[0] !== '\n') {
-				segment('');
-				lineEndsMapped = false;
+			let lineStart = 0;
+			while (true) {
+				const lineEnd = piece.indexOf('\n', lineStart);
+				const end = lineEnd < 0 ? piece.length : lineEnd;
+				if (end > lineStart && (lineEndsMapped || !lineHasSegment)) {
+					segment('');
+					lineEndsMapped = false;
+					endsWithoutSource = true;
+				}
+				column += end - lineStart;
+				if (lineEnd < 0) {
+					break;
+				}
+				newLine();
+				lineStart = lineEnd + 1;
 			}
-			advance(piece);
 			text += piece;
 			return;
 		}
@@ -101,17 +123,23 @@ export function renderWithSourceMap<Source extends RewriteSource>(
 		let sourceColumn = piece.start - lineStarts[line]!;
 		if (piece.text === undefined) {
 			const { content } = piece.source;
+			let previous = -1;
 			for (let offset = piece.start; offset < piece.end; offset++) {
-				if (content.charCodeAt(offset) === 10) {
+				const code = content.charCodeAt(offset);
+				if (code === 10) {
 					newLine();
 					line++;
 					sourceColumn = 0;
+					previous = -1;
+					continue;
 				}
-				else {
+				const kind = classOf(code);
+				if (kind !== previous || kind === CharClass.Other) {
 					mapTo(index, line, sourceColumn);
-					column++;
-					sourceColumn++;
 				}
+				previous = kind;
+				column++;
+				sourceColumn++;
 			}
 			text += content.slice(piece.start, piece.end);
 		}
@@ -129,7 +157,8 @@ export function renderWithSourceMap<Source extends RewriteSource>(
 		}
 	});
 
-	map.mappings = mappings;
+	// Node reads a segment without a source that ends the mappings as one that keeps the source position before it
+	map.mappings = endsWithoutSource ? mappings + ';' : mappings;
 	return { text, map };
 }
 
@@ -146,4 +175,17 @@ function encode(value: number) {
 	}
 	while (rest);
 	return code;
+}
+
+function classOf(code: number) {
+	if (code === 32 || code === 9 || code === 11 || code === 12 || code === 13 || code === 0xa0 || code === 0xfeff) {
+		return CharClass.Space;
+	}
+	if (
+		(code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122) || code === 95
+		|| code === 36 || code >= 128
+	) {
+		return CharClass.Word;
+	}
+	return CharClass.Other;
 }

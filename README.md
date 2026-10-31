@@ -77,7 +77,7 @@ const { text: output, map: sourceMap } = renderWithSourceMap(
 	sink => rewrite.render(0, source.content.length, sink, { data: 'file' }),
 	(from: typeof source) => from.name,
 );
-// {"version":3,"sources":["main.js"],"sourcesContent":["log(name);\nconst name = \"Ada\";\n"],"names":[],"mappings":"AACA,CAAC,CAAC,CAAC,CAAC,CAAC,C,IAAK,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC;AADlB,CAAC,CAAC,CAAC,C,IAAK,CAAC;"}
+// {"version":3,"sources":["main.js"],"sourcesContent":["log(name);\nconst name = \"Ada\";\n"],"names":[],"mappings":"AACA,KAAK,C,IAAK,CAAC,CAAC,CAAC,CAAC,GAAG,CAAC;AADlB,GAAG,C,IAAK,CAAC;"}
 ```
 
-Each kept char maps to itself, so a position anywhere in kept text, as the end of a range, maps exactly. The `text` of a range maps as a whole to the start of the range, at the start of each of its lines. New text maps nowhere: where it follows mapped text on a line, a segment without a source ends that mapping, so a lookup in it finds no original position rather than the one of the text before it.
+Kept text maps to itself at the start of each piece, line, word, run of whitespace and other char, so the map is precise at token boundaries, the positions that debuggers, stack traces and coverage read; a position inside a word maps to its start. The `text` of a range maps as a whole to the start of the range, at the start of each of its lines. New text maps nowhere: where it starts a line or follows mapped text on one, a segment without a source ends the mapping before it, so a lookup in it finds no original position, also by a consumer that looks back across lines.
