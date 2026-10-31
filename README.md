@@ -22,10 +22,11 @@ muggle-string has no dependencies. A rewrite renders to pieces, new text and ran
 import { createSourceRewrite, rewritePieceText } from 'muggle-string';
 
 const source = { name: 'main.js', content: 'log(name);\nconst name = "Ada";\n' };
-const rewrite = createSourceRewrite<typeof source, { data: string }>(source);
+const rewrite = createSourceRewrite<typeof source, { data: string; name?: string }>(source);
 
-for (const { index } of source.content.matchAll(/\bname\b/g)) {
-	rewrite.replace(index, index + 'name'.length, 'user');
+for (const { index: start } of source.content.matchAll(/\bname\b/g)) {
+	const end = start + 'name'.length;
+	rewrite.replace(start, end, { source, start, end, text: 'user', name: 'name', data: 'rename' });
 }
 
 const declaration = rewrite.cut(source.content.indexOf('const'), source.content.length, { data: 'declaration' });
@@ -62,7 +63,7 @@ Code is a piece of a rewrite, a slice, which renders its cut in place, or an arr
 ```ts
 import type { Piece, RewriteOrigin } from 'muggle-string';
 
-const pieces: Piece<RewriteOrigin<typeof source, { data: string }>>[] = [];
+const pieces: Piece<RewriteOrigin<typeof source, { data: string; name?: string }>>[] = [];
 rewrite.render(0, source.content.length, piece => pieces.push(piece), { data: 'file' });
 ```
 
@@ -77,7 +78,9 @@ const { text: output, map: sourceMap } = renderWithSourceMap(
 	sink => rewrite.render(0, source.content.length, sink, { data: 'file' }),
 	(from: typeof source) => from.name,
 );
-// {"version":3,"sources":["main.js"],"sourcesContent":["log(name);\nconst name = \"Ada\";\n"],"names":[],"mappings":"AACA,KAAK,C,IAAK,CAAC,CAAC,CAAC,CAAC,GAAG,CAAC;AADlB,GAAG,C,IAAK,CAAC;"}
+// {"version":3,"sources":["main.js"],"sourcesContent":["log(name);\nconst name = \"Ada\";\n"],"names":["name"],"mappings":"AACA,KAAK,CAACA,IAAI,CAAC,CAAC,CAAC,CAAC,GAAG,CAAC;AADlB,GAAG,CAACA,IAAI,CAAC;"}
 ```
 
 Kept text maps to itself at the start of each piece, line, word, run of whitespace and other char. A word is a run of Unicode letters, marks and digits, and each other char, as `_`, `$` or `-`, maps on its own, since syntaxes differ on joining them into names; so the map knows no syntax, and is precise at the token boundaries of any syntax whose tokens do not start inside such a word, as JavaScript, TypeScript, HTML and CSS, the positions that debuggers, stack traces and coverage read. A position inside a word maps to its start. The `text` of a range maps as a whole to the start of the range, at the start of each of its lines. New text maps nowhere: where it starts a line or follows mapped text on one, a segment without a source ends the mapping before it, so a lookup in it finds no original position, also by a consumer that looks back across lines.
+
+The `name` of a range, as in the usage above, is the original name of the symbol that its generated text starts with, and goes in `names` at the first segment of the range on a char. Debuggers show a generated binding under it and evaluate the original name as that binding, and Node names a stack frame by the name at the start of its function. Only the consumer knows which range renames a symbol, so a range has a name only where it gives one: one on generated text that starts with another binding, as `__props.x` in place of `x`, would show `__props` as `x`.

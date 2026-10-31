@@ -8,7 +8,8 @@ interface TestSource {
 	content: string;
 }
 
-type TestPiece = Piece<{ source: TestSource }>;
+type TestPiece = Piece<{ source: TestSource; name?: string }>;
+type Position = { source: string; offset: number; name: string | null };
 
 function render(pieces: TestPiece[]) {
 	return renderWithSourceMap<TestSource>(sink => pieces.forEach(sink), source => source.name);
@@ -29,11 +30,18 @@ function classAt(text: string, index: number) {
  * Where each generated char of `pieces` must map, by line and column: a kept char at the start of its piece, its line,
  * a word, a run of whitespace or as another char to itself, the `text` of a range to the start of the range at the
  * start of each of its lines but an empty last one, anything else nowhere, and `undefined` where the char before it maps.
+ * The first position of a range has its `name`.
  */
 function expected(pieces: TestPiece[]) {
-	const result: ({ source: string; offset: number } | null)[][] = [[]];
+	const result: (Position | null)[][] = [[]];
 	for (const piece of pieces) {
 		const text = rewritePieceText(piece);
+		let name = typeof piece === 'string' ? null : piece.name ?? null;
+		const at = (offset: number) => {
+			const position = { source: (piece as Exclude<TestPiece, string>).source.name, offset, name };
+			name = null;
+			return position;
+		};
 		for (let i = 0; i < text.length; i++) {
 			if (text[i] === '\n') {
 				result.push([]);
@@ -47,11 +55,11 @@ function expected(pieces: TestPiece[]) {
 				const kind = classAt(text, i);
 				const before = i === 0 || text[i - 1] === '\n' ? undefined : classAt(text, i - 1) ?? classAt(text, i - 2);
 				const boundary = kind !== undefined && (kind !== before || kind === 'other');
-				line.push(boundary ? { source: piece.source.name, offset: piece.start + i } : undefined as never);
+				line.push(boundary ? at(piece.start + i) : undefined as never);
 			}
 			else {
 				const lineStart = i === 0 || text[i - 1] === '\n';
-				line.push(lineStart ? { source: piece.source.name, offset: piece.start } : undefined as never);
+				line.push(lineStart ? at(piece.start) : undefined as never);
 			}
 		}
 	}
@@ -74,14 +82,25 @@ function check(pieces: TestPiece[]) {
 	const trace = new TraceMap(map as never);
 	const node = new NodeSourceMap(map);
 	expected(pieces).forEach((chars, line) => {
-		let before: { source: string; offset: number } | null = null;
+		let before: Position | null = null;
 		chars.forEach((want, column) => {
 			const got = originalPositionFor(trace, { line: line + 1, column });
-			const at = got.source === null ? null : { source: got.source, offset: offsetOf(map, got.source, got.line - 1, got.column) };
-			const entry = node.findEntry(line, column) as { originalSource?: string; originalLine: number; originalColumn: number };
+			const at = got.source === null
+				? null
+				: { source: got.source, offset: offsetOf(map, got.source, got.line - 1, got.column), name: got.name };
+			const entry = node.findEntry(line, column) as {
+				originalSource?: string;
+				originalLine: number;
+				originalColumn: number;
+				name?: string;
+			};
 			const nodeAt = entry.originalSource === undefined
 				? null
-				: { source: entry.originalSource, offset: offsetOf(map, entry.originalSource, entry.originalLine, entry.originalColumn) };
+				: {
+					source: entry.originalSource,
+					offset: offsetOf(map, entry.originalSource, entry.originalLine, entry.originalColumn),
+					name: entry.name ?? null,
+				};
 			if (want === undefined) {
 				want = before!;
 			}
@@ -151,6 +170,26 @@ describe('renderWithSourceMap', () => {
 	test('the text of a range that ends a line does not map the empty line after it', () => {
 		const { map } = check([{ source: main, start: 0, end: 12, text: 'replaced\n' }, 'new']);
 		expect(map.mappings).toBe('AAAA;A;');
+	});
+
+	test('the name of a range goes in names, at its first segment only', () => {
+		const { map } = check([
+			{ source: main, start: 0, end: 6, text: '\nlet\n', name: 'const' },
+			{ source: main, start: 6, end: 7, text: 'b', name: 'a' },
+			{ source: main, start: 7, end: 17, name: 'kept' },
+			{ source: main, start: 17, end: 18, text: 'b.c', name: 'a' },
+			{ source: main, start: 18, end: 21 },
+		]);
+		expect(map.names).toEqual(['const', 'a', 'kept']);
+	});
+
+	test('a name of a range that maps nothing goes nowhere', () => {
+		const { map } = check([
+			{ source: main, start: 0, end: 6, text: '', name: 'const' },
+			{ source: main, start: 6, end: 13, name: 'a' },
+			{ source: main, start: 13, end: 14, text: '\n', name: 'log' },
+		]);
+		expect(map.names).toEqual(['a']);
 	});
 
 	test('empty text of a range maps nothing', () => {

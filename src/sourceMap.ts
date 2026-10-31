@@ -25,10 +25,11 @@ const enum CharClass {
  * syntax whose tokens do not start inside such a word;
  * the `text` of a range maps as a whole to the start of the range, at the start of each of its lines but an empty last
  * one; new text maps nowhere, and where it starts a line or follows mapped text on one, a segment without a source
- * ends the mapping before it.
+ * ends the mapping before it. The `name` of a range is the original name of the symbol that its generated text starts
+ * with, as of a symbol that `text` renames; it goes in `names`, for the first segment of the range on a char.
  */
 export function renderWithSourceMap<Source extends RewriteSource>(
-	render: (sink: (piece: Piece<{ source: Source }>) => void) => void,
+	render: (sink: (piece: Piece<{ source: Source; name?: string }>) => void) => void,
 	name: (source: Source) => string,
 ): { text: string; map: SourceMap } {
 	const sources = new Map<Source, { index: number; lineStarts: number[] }>();
@@ -43,14 +44,29 @@ export function renderWithSourceMap<Source extends RewriteSource>(
 	let lastSource = 0;
 	let lastLine = 0;
 	let lastSourceColumn = 0;
+	let lastName = 0;
+	let pieceName: string | undefined;
+	const names = new Map<string, number>();
 
 	const segment = (fields: string) => {
 		mappings += (lineHasSegment ? ',' : '') + encode(column - lastColumn) + fields;
 		lastColumn = column;
 		lineHasSegment = true;
 	};
-	const mapTo = (source: number, line: number, sourceColumn: number) => {
-		segment(encode(source - lastSource) + encode(line - lastLine) + encode(sourceColumn - lastSourceColumn));
+	const mapTo = (source: number, line: number, sourceColumn: number, named = true) => {
+		let fields = encode(source - lastSource) + encode(line - lastLine) + encode(sourceColumn - lastSourceColumn);
+		if (named && pieceName !== undefined) {
+			let known = names.get(pieceName);
+			if (known === undefined) {
+				known = names.size;
+				names.set(pieceName, known);
+				map.names.push(pieceName);
+			}
+			fields += encode(known - lastName);
+			lastName = known;
+			pieceName = undefined;
+		}
+		segment(fields);
 		lastSource = source;
 		lastLine = line;
 		lastSourceColumn = sourceColumn;
@@ -111,6 +127,7 @@ export function renderWithSourceMap<Source extends RewriteSource>(
 			return;
 		}
 		const { index, lineStarts } = sourceOf(piece.source);
+		pieceName = piece.name;
 		let line = 0;
 		let high = lineStarts.length - 1;
 		while (line < high) {
@@ -157,14 +174,15 @@ export function renderWithSourceMap<Source extends RewriteSource>(
 			const code = piece.text;
 			let lineStart = 0;
 			for (let lineEnd = code.indexOf('\n'); lineEnd >= 0 && lineEnd < code.length - 1; lineEnd = code.indexOf('\n', lineEnd + 1)) {
-				mapTo(index, line, sourceColumn);
+				mapTo(index, line, sourceColumn, lineEnd > lineStart);
 				newLine();
 				lineStart = lineEnd + 1;
 			}
-			mapTo(index, line, sourceColumn);
+			mapTo(index, line, sourceColumn, code[lineStart] !== '\n');
 			advance(code.slice(lineStart));
 			text += code;
 		}
+		pieceName = undefined;
 	});
 
 	// Node reads a segment without a source that ends the mappings as one that keeps the source position before it
