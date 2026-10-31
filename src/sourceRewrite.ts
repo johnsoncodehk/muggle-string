@@ -4,21 +4,21 @@ import type { Piece, RewriteSource } from './types';
  * What a range of a rewrite carries beyond its offsets: its source, and the fields of the consumer that the view or the
  * slice that renders it gives, none by default.
  */
-export type RewriteOrigin<Source extends RewriteSource, Data> = Data & { source: Source };
+export type RewriteOrigin<Source extends RewriteSource, Data = {}> = Data & { source: Source };
 
 /** Code written into a rewrite: pieces, slices, which render their cut in place, and arrays of code. */
-export type RewriteCode<Source extends RewriteSource, Data> =
+export type RewriteCode<Source extends RewriteSource, Data = {}> =
 	| Piece<RewriteOrigin<Source, Data>>
 	| RewriteSlice<Source, Data>
 	| readonly RewriteCode<Source, Data>[];
 
 /** The fields of the kept pieces of the cut, and its placeholder. */
-export type RewriteCutOptions<Source extends RewriteSource, Data> = Data & {
+export type RewriteCutOptions<Source extends RewriteSource, Data = {}> = Data & {
 	/** The code that takes the place of the cut in the cut that contains it. */
 	placeholder?: RewriteCode<Source, Data>;
 };
 
-export interface RewriteWriter<Source extends RewriteSource, Data> {
+export interface RewriteWriter<Source extends RewriteSource, Data = {}> {
 	/**
 	 * `code` right before the text that starts at `offset`; it goes wherever that text goes. At the end of the text,
 	 * no text starts there: the code stays after all text.
@@ -33,7 +33,7 @@ export interface RewriteWriter<Source extends RewriteSource, Data> {
 	replace(start: number, end: number, code: RewriteCode<Source, Data>): void;
 }
 
-export interface RewriteSlice<Source extends RewriteSource, Data> {
+export interface RewriteSlice<Source extends RewriteSource, Data = {}> {
 	/** Passes the pieces of the slice to `sink`, in order: no string is empty, and kept text is a range without `text`. */
 	render(sink: (piece: Piece<RewriteOrigin<Source, Data>>) => void): void;
 }
@@ -43,7 +43,7 @@ export interface RewriteSlice<Source extends RewriteSource, Data> {
  * only by slices, which nest or are disjoint, so edits never conflict. The rewrite is itself the outermost writer.
  * The first render freezes the edits.
  */
-export interface SourceRewrite<Source extends RewriteSource, Data> extends RewriteWriter<Source, Data> {
+export interface SourceRewrite<Source extends RewriteSource, Data = {}> extends RewriteWriter<Source, Data> {
 	/** The source that the rewrite edits, which its kept pieces carry. */
 	readonly source: Source;
 	/**
