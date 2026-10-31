@@ -468,7 +468,7 @@ describe('construction errors', () => {
 
 	test('a zero-width cut with a placeholder is an error', () => {
 		const rewrite = createRewrite(s, 'abc');
-		expect(() => rewrite.cut(1, 1, { data: 'a', placeholder: 'P' })).toThrow('cannot have a placeholder');
+		expect(() => rewrite.cut(1, 1, { data: 'a', placeholder: 'P' })).toThrow('The empty cut at 1 cannot have a placeholder.');
 	});
 
 	test('a cut placed in code that only its own render renders is an error at the first render', () => {
@@ -506,11 +506,40 @@ describe('construction errors', () => {
 		expect(() => collect(aCut)).toThrow('The cut 0..3 is placed inside itself, so it never renders.');
 	});
 
-	test('placing a cut twice is an error', () => {
+	test('rendering a cut again is an error that tells how', () => {
 		const rewrite = createRewrite(s, 'abc');
 		const body = rewrite.cut(0, 3, { data: 'body' });
 		collect(body);
-		expect(() => collect(body)).toThrow('The cut 0..3 is placed twice.');
+		expect(() => collect(body)).toThrow('The cut 0..3 is already rendered; a slice renders once.');
+
+		const twice = createRewrite(s, 'abc');
+		const whole = twice.cut(0, 3, { data: 'whole' });
+		const moved = twice.cut(1, 2, { data: 'moved' });
+		twice.insertBefore(0, moved);
+		twice.insertBefore(3, moved);
+		expect(() => collect(whole)).toThrow('The cut 1..2 is placed twice.');
+
+		const placedAfter = createRewrite(s, 'abc');
+		const after = placedAfter.cut(0, 3, { data: 'after' });
+		const early = placedAfter.cut(1, 2, { data: 'early' });
+		placedAfter.insertBefore(3, early);
+		collect(early);
+		expect(() => collect(after)).toThrow('The cut 1..2 is already rendered; a slice renders once.');
+
+		const empty = createRewrite(s, 'abc');
+		const anchor = empty.cut(1, 1, { data: 'anchor' });
+		collect(anchor);
+		expect(() => collect(anchor)).toThrow('The cut at 1 is already rendered');
+	});
+
+	test('the data of a cut can be left out when undefined is a data', () => {
+		const source = { content: 'abc' };
+		const rewrite = createSourceRewrite<typeof source, string | undefined>(source);
+		const pieces: Piece<{ source: typeof source; data: string | undefined }>[] = [];
+		rewrite.cut(0, 3, {}).render(piece => pieces.push(piece));
+		expect(pieces).toEqual([{ source, start: 0, end: 3, data: undefined }]);
+		// @ts-expect-error
+		createSourceRewrite<typeof source, string>(source).cut(0, 3, {});
 	});
 
 	test('an edit after the first render is an error', () => {
@@ -523,9 +552,9 @@ describe('construction errors', () => {
 
 	test('offsets out of the text, an empty replace and an invalid rank are errors', () => {
 		const rewrite = createRewrite(s, 'abc');
-		expect(() => rewrite.insertBefore(4, 'x')).toThrow('4..4 is out of 0..3.');
-		expect(() => rewrite.writer(0).replace(2, 1, 'x')).toThrow('2..1 is out of 0..3.');
-		expect(() => rewrite.writer(0).replace(1, 1, 'x')).toThrow('removes no char');
+		expect(() => rewrite.insertBefore(4, 'x')).toThrow('The offset 4 is out of 0..3.');
+		expect(() => rewrite.writer(0).replace(2, 1, 'x')).toThrow('The range 2..1 is out of 0..3.');
+		expect(() => rewrite.writer(0).replace(1, 1, 'x')).toThrow('The replace at 1 removes no char.');
 		expect(() => rewrite.writer(-1)).toThrow('is not a non-negative integer');
 	});
 

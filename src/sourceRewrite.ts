@@ -6,12 +6,20 @@ export type RewriteCode<Source extends RewriteSource, Data> =
 	| RewriteSlice<Source, Data>
 	| readonly RewriteCode<Source, Data>[];
 
-export interface RewriteCutOptions<Source extends RewriteSource, Data> {
-	/** The data of the kept pieces of the cut. */
-	data: Data;
-	/** The code that takes the place of the cut in the cut that contains it. */
-	placeholder?: RewriteCode<Source, Data>;
-}
+/** The options of a cut, whose `data` can be left out when `undefined` is a `Data`. */
+export type RewriteCutOptions<Source extends RewriteSource, Data> =
+	& {
+		/** The code that takes the place of the cut in the cut that contains it. */
+		placeholder?: RewriteCode<Source, Data>;
+	}
+	& (undefined extends Data ? {
+			/** The data of the kept pieces of the cut. */
+			data?: Data;
+		}
+		: {
+			/** The data of the kept pieces of the cut. */
+			data: Data;
+		});
 
 export interface RewriteWriter<Source extends RewriteSource, Data> {
 	/**
@@ -201,17 +209,19 @@ class Rewrite<Source extends RewriteSource, Data> {
 			replace: (start, end, code) => {
 				this.check(start, end);
 				if (start === end) {
-					throw new RangeError(`The replace at ${start}..${end} removes no char.`);
+					throw new RangeError(`The replace at ${start} removes no char.`);
 				}
 				edits.add(start, Side.Slot, code);
 				this.addRemoval(start, end);
 			},
-			cut: (start, end, { data, placeholder }) => {
+			cut: (start, end, options) => {
 				this.check(start, end);
+				// `data` is left out only when `undefined` is a `Data`
+				const { data, placeholder } = options as { data: Data; placeholder?: RewriteCode<Source, Data> };
 				const cut = new Cut(this, start, end, data, placeholder);
 				if (start === end) {
 					if (placeholder !== undefined) {
-						throw new RangeError(`The empty cut ${start}..${end} cannot have a placeholder.`);
+						throw new RangeError(`The empty cut at ${start} cannot have a placeholder.`);
 					}
 					if (!this.source.content.length) {
 						this.firstEmpty ??= cut;
@@ -237,7 +247,7 @@ class Rewrite<Source extends RewriteSource, Data> {
 			throw new Error('The rewrite is already rendered.');
 		}
 		if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || start > end || end > this.source.content.length) {
-			throw new RangeError(`${start}..${end} is out of 0..${this.source.content.length}.`);
+			throw new RangeError(`${start === end ? `The offset ${start}` : `The range ${start}..${end}`} is out of 0..${this.source.content.length}.`);
 		}
 	}
 
@@ -383,7 +393,7 @@ class Rewrite<Source extends RewriteSource, Data> {
 				const renderer = list[top[1]++]!;
 				const seen = visited.get(renderer);
 				if (seen === 1) {
-					throw new Error(`The cut ${renderer.start}..${renderer.end} is placed inside itself, so it never renders.`);
+					throw new Error(`${nameCut(renderer)} is placed inside itself, so it never renders.`);
 				}
 				if (!seen) {
 					visited.set(renderer, 1);
@@ -467,7 +477,15 @@ class Rewrite<Source extends RewriteSource, Data> {
 const enum CutState {
 	Unrendered,
 	Rendering,
-	Rendered,
+	Placed,
+	RenderedByItself,
+}
+
+/** How deep the current render is in the renders of slices placed in code, across rewrites; 0 outside renders. */
+let renderDepth = 0;
+
+function nameCut(cut: { start: number; end: number }) {
+	return cut.start === cut.end ? `The cut at ${cut.start}` : `The cut ${cut.start}..${cut.end}`;
 }
 
 class Cut<Source extends RewriteSource, Data> implements RewriteSlice<Source, Data> {
@@ -487,18 +505,24 @@ class Cut<Source extends RewriteSource, Data> implements RewriteSlice<Source, Da
 
 	render(sink: (piece: Piece<{ source: Source; data: Data }>) => void) {
 		this.rewrite.freeze();
+		const byItself = !renderDepth;
 		if (this.state === CutState.Rendering) {
-			throw new Error(`The cut ${this.start}..${this.end} is placed inside itself, so it never renders.`);
+			throw new Error(`${nameCut(this)} is placed inside itself, so it never renders.`);
 		}
-		if (this.state === CutState.Rendered) {
-			throw new Error(`The cut ${this.start}..${this.end} is placed twice.`);
+		if (this.state === CutState.Placed && !byItself) {
+			throw new Error(`${nameCut(this)} is placed twice.`);
+		}
+		if (this.state !== CutState.Unrendered) {
+			throw new Error(`${nameCut(this)} is already rendered; a slice renders once.`);
 		}
 		this.state = CutState.Rendering;
+		renderDepth++;
 		try {
 			renderCut(this, new Walker(this.rewrite, sink));
 		}
 		finally {
-			this.state = CutState.Rendered;
+			renderDepth--;
+			this.state = byItself ? CutState.RenderedByItself : CutState.Placed;
 		}
 	}
 }
