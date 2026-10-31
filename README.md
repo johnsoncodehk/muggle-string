@@ -9,9 +9,10 @@ muggle-string has no dependencies and knows no mapping format: a rewrite renders
 - The rewrite is itself a writer, and `rewrite.writer(rank)` gives the writer of a rank. A higher rank sits outside a lower one, and the rewrite sits outside all.
 - `insertBefore(offset, code)` and `insertAfter(offset, code)` attach code to a side of a char, so it goes wherever that char goes. `replace(start, end, code)` removes the text and puts `code` in the place of its first char.
 - Removals add up, so edits of different writers never conflict.
-- Text moves only by `cut(start, end, { data, placeholder })`, which every writer has. The cuts of all writers are nested or disjoint. A cut renders its text, with the edits of all writers in it, wherever its slice is placed, exactly once; the cut around it renders `placeholder` instead.
-- A slice renders where it is placed or by itself, so a consumer can render the cuts of one rewrite into separate outputs, in any order. Hence a rewrite has no last render: the text of a cut that is never rendered, or placed in code that is never rendered, is not rendered, and no error tells. A slice placed in code that only its own render renders, as in its own range, is an error at the first render, and a slice that renders a second time is an error then.
-- Code at the head or tail of a cut belongs to the outermost cut that has that edge.
+- `rewrite.render(start, end, data, sink)` renders a view of the text: its chars and the edits at them, kept text with `data`. A view owns no text, so views can overlap and render again; a consumer renders the text in the places it chooses by views.
+- Text moves only by cuts of parts. `rewrite.root` is the whole text, and `part.cut(start, end, { data, placeholder })` splits a part into `{ before, slice, after }`, which further cuts cut; the part is used up, so cuts nest or are disjoint by construction. A slice renders its text, with the edits of all writers in it, wherever it is placed, exactly once; where it is cut from, `placeholder` renders instead. A slice is a part too, so a cut inside a slice moves with it.
+- Text that is not wanted is removed by `replace`. A slice is cut to be placed, and `rewrite.unrendered()` gives the slices that have not rendered, which, after the last render of a consumer, are those that it placed nowhere: a rewrite has no last render, as a slice renders where it is placed or by itself, in any order. A slice placed in code that only its own render renders, as in its own range, is an error at the first render, and a slice that renders a second time is an error then.
+- Code before all text (`insertAfter(0, …)`) renders in a view from 0, and code after all text (`insertBefore(length, …)`) in a view to the end of the text.
 - The entries of one writer at one side of one char keep call order; code that must go outside them comes from a writer of a higher rank.
 - The first render freezes the rewrite.
 
@@ -27,12 +28,13 @@ for (const { index } of source.content.matchAll(/\bname\b/g)) {
 	rewrite.replace(index, index + 'name'.length, 'user');
 }
 
-const file = rewrite.cut(0, source.content.length, { data: 'file' });
-const declaration = rewrite.cut(source.content.indexOf('const'), source.content.length, { data: 'declaration' });
+const { slice: declaration } = rewrite.root.cut(source.content.indexOf('const'), source.content.length, {
+	data: 'declaration',
+});
 rewrite.insertBefore(0, declaration);
 
 let output = '';
-file.render(piece => output += rewritePieceText(piece));
+rewrite.render(0, source.content.length, 'file', piece => output += rewritePieceText(piece));
 // const user = "Ada";
 // log(user);
 ```
@@ -47,13 +49,13 @@ type Piece<Origin = unknown> = string | (Origin & { start: number; end: number; 
 
 A string is new text, which maps nowhere. An object is the range `start`..`end` of a source text: without `text` it copies the text there, and with `text` it is generated text that stands for the range, mapped as the consumer of the pieces decides.
 
-`Origin` is what a range carries beyond its offsets. A producer of one source and no data, such as [muggle-pug](https://github.com/johnsoncodehk/muggle-pug), emits `Piece`, whose ranges are only offsets: its consumer knows the source. The code of a rewrite can mix sources, so its pieces are `Piece<{ source: Source; data: Data }>`, where `Source` is a `RewriteSource`, and its kept text renders as ranges without `text`, with the data of the cut that owns them. `rewritePieceText(piece)` gives the generated text of such a piece: a string, the `text` of a range, or the content of its source that it keeps.
+`Origin` is what a range carries beyond its offsets. A producer of one source and no data, such as [muggle-pug](https://github.com/johnsoncodehk/muggle-pug), emits `Piece`, whose ranges are only offsets: its consumer knows the source. The code of a rewrite can mix sources, so its pieces are `Piece<{ source: Source; data: Data }>`, where `Source` is a `RewriteSource`, and its kept text renders as ranges without `text`, with the data of the view or the slice that renders them. `rewritePieceText(piece)` gives the generated text of such a piece: a string, the `text` of a range, or the content of its source that it keeps.
 
 Code is a piece of a rewrite, a slice, which renders its cut in place, or an array of code.
 
 ## Rendering
 
-`slice.render(sink)` passes the pieces of the slice to `sink`, a function of one piece, in order: no string is empty, a piece of code passes through as it is, and kept text is a range without `text`. A consumer that wants an array of pieces pushes them:
+`rewrite.render(start, end, data, sink)` and `slice.render(sink)` pass the pieces of the view or the slice to `sink`, a function of one piece, in order: no string is empty, a piece of code passes through as it is, and kept text is a range without `text`. A consumer that wants an array of pieces pushes them:
 
 ```ts
 const pieces: Piece<{ source: string; data: string }>[] = [];
@@ -94,7 +96,7 @@ const advance = (text: string) => {
 	line += lines.length - 1;
 	column = (lines.length > 1 ? 0 : column) + lines[lines.length - 1].length;
 };
-file.render(piece => {
+rewrite.render(0, source.content.length, 'file', piece => {
 	const value = rewritePieceText(piece);
 	const kept = typeof piece !== 'string' && piece.text === undefined;
 	let done = 0;
