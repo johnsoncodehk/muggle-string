@@ -62,48 +62,56 @@ slice.render(piece => pieces.push(piece));
 
 ## Source maps
 
-muggle-string builds no source map, but a sink can. In place of the sink of the usage above, this one tracks the line and column of the generated text and adds v3 segments with [`@jridgewell/gen-mapping`](https://github.com/jridgewell/sourcemaps/tree/main/packages/gen-mapping): new text maps nowhere, the `text` of a range maps as a whole to its start, and kept text maps at the start of each of its lines, so every column of it maps. The line starts of each source are computed once, by the source that a range carries.
+muggle-string builds no source map, but a sink can. In place of the sink of the usage above, this one tracks the line and column of the generated text and adds v3 segments with [`@jridgewell/gen-mapping`](https://github.com/jridgewell/sourcemaps/tree/main/packages/gen-mapping): new text maps nowhere, the `text` of a range maps as a whole to its start, and kept text maps at the start of each word and each other non-space char: every token maps, not every column. The first range of each source adds its content to the map and computes its line starts, which a binary search reads.
 
 ```ts
-import { addMapping, GenMapping, toEncodedMap } from '@jridgewell/gen-mapping';
+import { addMapping, GenMapping, setSourceContent, toEncodedMap } from '@jridgewell/gen-mapping';
 
+const map = new GenMapping({ file: 'main.out.js' });
 const lineStarts = new WeakMap<typeof source, number[]>();
 const toOriginal = (from: typeof source, offset: number) => {
 	let starts = lineStarts.get(from);
 	if (!starts) {
 		starts = [0, ...Array.from(from.content.matchAll(/\n/g), match => match.index + 1)];
 		lineStarts.set(from, starts);
+		setSourceContent(map, from.name, from.content);
 	}
-	let line = starts.length - 1;
-	while (starts[line] > offset) line--;
-	return { line: line + 1, column: offset - starts[line] };
+	let low = 0;
+	let high = starts.length - 1;
+	while (low < high) {
+		const mid = (low + high + 1) >> 1;
+		if (starts[mid] <= offset) low = mid;
+		else high = mid - 1;
+	}
+	return { line: low + 1, column: offset - starts[low] };
 };
 
-const map = new GenMapping({ file: 'main.out.js' });
 let output = '';
 let line = 1;
 let column = 0;
+const advance = (text: string) => {
+	const lines = text.split('\n');
+	line += lines.length - 1;
+	column = (lines.length > 1 ? 0 : column) + lines[lines.length - 1].length;
+};
 file.render(piece => {
 	const value = rewritePieceText(piece);
 	const kept = typeof piece !== 'string' && piece.text === undefined;
-	let offset = 0;
-	value.split('\n').forEach((part, i) => {
-		if (i) {
-			line++;
-			column = 0;
-		}
-		if (part && typeof piece === 'string' && i === 0) {
+	let done = 0;
+	for (const { index } of kept ? value.matchAll(/\w+|\S/g) : value ? [{ index: 0 }] : []) {
+		advance(value.slice(done, index));
+		done = index;
+		if (typeof piece === 'string') {
 			addMapping(map, { generated: { line, column } });
 		}
-		else if (part && typeof piece !== 'string' && (i === 0 || kept)) {
-			const original = toOriginal(piece.source, piece.start + (kept ? offset : 0));
+		else {
+			const original = toOriginal(piece.source, piece.start + (kept ? index : 0));
 			addMapping(map, { generated: { line, column }, source: piece.source.name, original });
 		}
-		offset += part.length + 1;
-		column += part.length;
-	});
+	}
+	advance(value.slice(done));
 	output += value;
 });
 const sourceMap = toEncodedMap(map);
-// {"version":3,"file":"main.out.js","sources":["main.js"],"mappings":"AACA,M,IAAU;AADV,I,IAAQ",...}
+// {"version":3,"file":"main.out.js","names":[],"sources":["main.js"],"sourcesContent":["log(name);\nconst name = \"Ada\";\n"],"mappings":"AACA,M,KAAW,EAAE,CAAC,GAAG,CAAC;AADlB,GAAG,C,IAAK,CAAC","ignoreList":[]}
 ```
