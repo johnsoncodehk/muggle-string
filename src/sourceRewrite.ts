@@ -329,8 +329,8 @@ class Rewrite<Source extends RewriteSource, Data> {
 		if (!this.cuts.length && !this.firstEmpty) {
 			return;
 		}
-		/** The cuts that render the code that each cut is placed in. */
-		const renderers = new Map<Cut<Source, Data>, Cut<Source, Data>[]>();
+		/** The cuts that have renderers. */
+		const placed: Cut<Source, Data>[] = [];
 		const held: Cut<Source, Data>[] = [];
 		const collect = (code: RewriteCode<Source, Data>) => {
 			if (typeof code === 'string') {
@@ -348,12 +348,12 @@ class Rewrite<Source extends RewriteSource, Data> {
 		const place = (renderer: Cut<Source, Data> | undefined) => {
 			if (renderer) {
 				for (const cut of held) {
-					const list = renderers.get(cut);
-					if (list) {
-						list.push(renderer);
+					if (cut.renderers) {
+						cut.renderers.push(renderer);
 					}
 					else {
-						renderers.set(cut, [renderer]);
+						cut.renderers = [renderer];
+						placed.push(cut);
 					}
 				}
 			}
@@ -373,30 +373,32 @@ class Rewrite<Source extends RewriteSource, Data> {
 				place(cut.parent);
 			}
 		}
-		/** 1 while the renderers of a cut are walked, 2 once none of them leads back to it. */
-		const visited = new Map<Cut<Source, Data>, 1 | 2>();
-		for (const first of renderers.keys()) {
-			if (visited.has(first)) {
+		/** The walked cuts, each with the index of its next renderer. */
+		const path: Cut<Source, Data>[] = [];
+		const next: number[] = [];
+		for (const first of placed) {
+			if (first.visit) {
 				continue;
 			}
-			visited.set(first, 1);
-			const path: [Cut<Source, Data>, number][] = [[first, 0]];
+			first.visit = Visit.Walking;
+			path.push(first);
+			next.push(0);
 			while (path.length) {
-				const top = path[path.length - 1]!;
-				const list = renderers.get(top[0]);
-				if (!list || top[1] === list.length) {
-					visited.set(top[0], 2);
-					path.pop();
+				const top = path.length - 1;
+				const renderers = path[top]!.renderers;
+				if (!renderers || next[top] === renderers.length) {
+					path.pop()!.visit = Visit.Done;
+					next.pop();
 					continue;
 				}
-				const renderer = list[top[1]++]!;
-				const seen = visited.get(renderer);
-				if (seen === 1) {
+				const renderer = renderers[next[top]!++]!;
+				if (renderer.visit === Visit.Walking) {
 					throw new Error(`${nameCut(renderer)} is placed inside itself, so it never renders.`);
 				}
-				if (!seen) {
-					visited.set(renderer, 1);
-					path.push([renderer, 0]);
+				if (!renderer.visit) {
+					renderer.visit = Visit.Walking;
+					path.push(renderer);
+					next.push(0);
 				}
 			}
 		}
@@ -473,6 +475,13 @@ class Rewrite<Source extends RewriteSource, Data> {
 	}
 }
 
+// the walk of the renderers of the cuts, which finds a cut that leads back to itself
+const enum Visit {
+	Unvisited,
+	Walking,
+	Done,
+}
+
 const enum CutState {
 	Unrendered,
 	Rendering,
@@ -492,6 +501,9 @@ class Cut<Source extends RewriteSource, Data> implements RewriteSlice<Source, Da
 	parent: Cut<Source, Data> | undefined;
 	/** The cuts directly inside, sorted and disjoint. */
 	children: Cut<Source, Data>[] | undefined;
+	/** The cuts whose render renders code that it is placed in. */
+	renderers: Cut<Source, Data>[] | undefined;
+	visit = Visit.Unvisited;
 	state = CutState.Unrendered;
 
 	constructor(
