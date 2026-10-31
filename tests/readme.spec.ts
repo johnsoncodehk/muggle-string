@@ -6,7 +6,7 @@ import { rewritePieceText } from '../src';
 
 const readme = fs.readFileSync(path.join(__dirname, '../README.md'), 'utf8').replace(/\r\n/g, '\n');
 const blocks = [...readme.matchAll(/^```ts\n(.*?)^```$/gms)].map(([, code]) => code!);
-const [usage, text, declaration, rendering, sourceMaps] = blocks;
+const [usage, text, declaration, rendering, sourceMaps, spanMappings] = blocks;
 const dir = path.join(__dirname, '.readme');
 
 /** The module of `example`, which renders the rewrite of the usage, exporting `names`. */
@@ -31,6 +31,7 @@ beforeAll(() => {
 	writeExample('text', text!, ['output']);
 	writeExample('rendering', rendering!, ['pieces']);
 	writeExample('sourceMaps', sourceMaps!, ['output', 'sourceMap']);
+	writeExample('spanMappings', spanMappings!, ['spans']);
 	fs.writeFileSync(
 		path.join(dir, 'declaration.ts'),
 		`import type { Piece as Declared } from '../../src';\n${declaration}`
@@ -54,8 +55,8 @@ beforeAll(() => {
 	);
 });
 
-test('the readme has the examples of the usage, its text, the pieces, the rendering and the source maps', () => {
-	expect(blocks.length).toBe(5);
+test('the readme has the examples of the usage, its text, the pieces, the rendering, the source maps and the span mappings', () => {
+	expect(blocks.length).toBe(6);
 	expect(declaration).toMatch(/^type Piece</);
 });
 
@@ -79,4 +80,20 @@ test('the source map of the readme is the one that it shows', async () => {
 	const { output, sourceMap } = await import('./.readme/sourceMaps');
 	expect(output.trimEnd()).toBe(shown(text!));
 	expect(JSON.stringify(sourceMap)).toBe(shown(sourceMaps!));
+});
+
+test('the span mappings of the readme are the ones that it shows, and map the text of each span to its range', async () => {
+	const { spans } = await import('./.readme/spanMappings');
+	expect(spans.map(span => JSON.stringify(span)).join('\n')).toBe(shown(spanMappings!));
+	const { output } = await import('./.readme/text');
+	for (const span of spans) {
+		const generated = output.slice(span.virtualStart, span.virtualEnd);
+		const original = 'log(name);\nconst name = "Ada";\n'.slice(span.originalStart, span.originalEnd);
+		if (span.kind === 'Verbatim') {
+			expect(generated).toBe(original);
+		}
+		else {
+			expect(original).toBe('name');
+		}
+	}
 });
