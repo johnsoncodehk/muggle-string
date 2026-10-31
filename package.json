@@ -18,7 +18,7 @@
 		"test": "vitest run"
 	},
 	"devDependencies": {
-		"@jridgewell/gen-mapping": "^0.3.13",
+		"@jridgewell/trace-mapping": "^0.3.31",
 		"@types/node": "^26.0.1",
 		"typescript": "7.1.0-beta",
 		"vitest": "latest"

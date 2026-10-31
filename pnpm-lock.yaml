@@ -5,9 +5,9 @@ settings:
   excludeLinksFromLockfile: false
 
 devDependencies:
-  '@jridgewell/gen-mapping':
-    specifier: ^0.3.13
-    version: 0.3.13
+  '@jridgewell/trace-mapping':
+    specifier: ^0.3.31
+    version: 0.3.31
   '@types/node':
     specifier: ^26.0.1
     version: 26.6.6
@@ -19,13 +19,6 @@ devDependencies:
     version: 5.0.5(@types/node@26.6.6)(vite@8.3.5)
 
 packages:
-
-  /@jridgewell/gen-mapping@0.3.13:
-    resolution: {integrity: sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA==}
-    dependencies:
-      '@jridgewell/sourcemap-codec': 1.6.0
-      '@jridgewell/trace-mapping': 0.3.31
-    dev: true
 
   /@jridgewell/resolve-uri@3.1.2:
     resolution: {integrity: sha512-bRISgCIjP20/tbWSPWMEi54QVPRZExkuD9lJL+UIxUKtwVJA8wW1Trb1jMs1RFXo1CBTNZ/5hpC9QvmKWdopKw==}

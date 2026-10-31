@@ -68,56 +68,16 @@ rewrite.render(0, source.content.length, piece => pieces.push(piece), { data: 'f
 
 ## Source maps
 
-muggle-string builds no source map, but a sink can. In place of the render of the usage above, this sink tracks the line and column of the generated text and adds v3 segments with [`@jridgewell/gen-mapping`](https://github.com/jridgewell/sourcemaps/tree/main/packages/gen-mapping): new text maps nowhere, the `text` of a range maps as a whole to its start, and kept text maps at the start of each word and each other non-space char: every token maps, not every column. The first range of each source adds its content to the map and computes its line starts, which a binary search reads.
+`renderWithSourceMap(render, name)` gives the generated text of the pieces that `render` passes to its sink, and a v3 source map of it, with the content of each source under the name that `name` gives it. In place of the render of the usage above:
 
 ```ts
-import { addMapping, GenMapping, setSourceContent, toEncodedMap } from '@jridgewell/gen-mapping';
+import { renderWithSourceMap } from 'muggle-string';
 
-const map = new GenMapping({ file: 'main.out.js' });
-const lineStarts = new WeakMap<typeof source, number[]>();
-const toOriginal = (from: typeof source, offset: number) => {
-	let starts = lineStarts.get(from);
-	if (!starts) {
-		starts = [0, ...Array.from(from.content.matchAll(/\n/g), match => match.index + 1)];
-		lineStarts.set(from, starts);
-		setSourceContent(map, from.name, from.content);
-	}
-	let low = 0;
-	let high = starts.length - 1;
-	while (low < high) {
-		const mid = (low + high + 1) >> 1;
-		if (starts[mid] <= offset) low = mid;
-		else high = mid - 1;
-	}
-	return { line: low + 1, column: offset - starts[low] };
-};
-
-let output = '';
-let line = 1;
-let column = 0;
-const advance = (text: string) => {
-	const lines = text.split('\n');
-	line += lines.length - 1;
-	column = (lines.length > 1 ? 0 : column) + lines[lines.length - 1].length;
-};
-rewrite.render(0, source.content.length, piece => {
-	const value = rewritePieceText(piece);
-	const kept = typeof piece !== 'string' && piece.text === undefined;
-	let done = 0;
-	for (const { index } of kept ? value.matchAll(/\w+|\S/g) : value ? [{ index: 0 }] : []) {
-		advance(value.slice(done, index));
-		done = index;
-		if (typeof piece === 'string') {
-			addMapping(map, { generated: { line, column } });
-		}
-		else {
-			const original = toOriginal(piece.source, piece.start + (kept ? index : 0));
-			addMapping(map, { generated: { line, column }, source: piece.source.name, original });
-		}
-	}
-	advance(value.slice(done));
-	output += value;
-}, { data: 'file' });
-const sourceMap = toEncodedMap(map);
-// {"version":3,"file":"main.out.js","names":[],"sources":["main.js"],"sourcesContent":["log(name);\nconst name = \"Ada\";\n"],"mappings":"AACA,M,KAAW,EAAE,CAAC,GAAG,CAAC;AADlB,GAAG,C,IAAK,CAAC","ignoreList":[]}
+const { text: output, map: sourceMap } = renderWithSourceMap(
+	sink => rewrite.render(0, source.content.length, sink, { data: 'file' }),
+	(from: typeof source) => from.name,
+);
+// {"version":3,"sources":["main.js"],"sourcesContent":["log(name);\nconst name = \"Ada\";\n"],"names":[],"mappings":"AACA,CAAC,CAAC,CAAC,CAAC,CAAC,C,IAAK,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC;AADlB,CAAC,CAAC,CAAC,C,IAAK,CAAC;"}
 ```
+
+Each kept char maps to itself, so a position anywhere in kept text, as the end of a range, maps exactly. The `text` of a range maps as a whole to the start of the range, at the start of each of its lines. New text maps nowhere: where it follows mapped text on a line, a segment without a source ends that mapping, so a lookup in it finds no original position rather than the one of the text before it.
