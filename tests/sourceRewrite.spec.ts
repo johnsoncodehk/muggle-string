@@ -416,22 +416,35 @@ describe('runs', () => {
 });
 
 describe('construction errors', () => {
-	test('a cut that crosses a cut is an error', () => {
+	test('a cut that crosses a cut is an error at the first render, and at every render after it', () => {
 		const rewrite = createRewrite(s, 'abcdef');
-		rewrite.cut(0, 6, { data: 'body' });
+		const body = rewrite.cut(0, 6, { data: 'body' });
 		rewrite.cut(0, 3, { data: 'a' });
-		expect(() => rewrite.cut(2, 5, { data: 'b' })).toThrow(
-			'The cut 2..5 crosses the cut 0..3; cuts are nested or disjoint.',
-		);
+		rewrite.cut(2, 5, { data: 'b' });
+		const message = 'The cuts 0..3 and 2..5 cross; cuts are nested or disjoint.';
+		expect(() => collect(body)).toThrow(message);
+		expect(() => collect(body)).toThrow(message);
 	});
 
 	test('a cut that crosses a sibling other than its neighbours is an error', () => {
 		const rewrite = createRewrite(s, 'abcdefg');
+		const body = rewrite.cut(0, 7, { data: 'body' });
 		rewrite.cut(1, 2, { data: 'a' });
 		rewrite.cut(3, 6, { data: 'b' });
-		expect(() => rewrite.cut(0, 4, { data: 'c' })).toThrow('crosses the cut 3..6');
-		rewrite.cut(0, 6, { data: 'd' });
-		rewrite.cut(2, 6, { data: 'e' });
+		rewrite.cut(0, 4, { data: 'c' });
+		expect(() => collect(body)).toThrow('The cuts 0..4 and 3..6 cross');
+	});
+
+	test('cuts in any call order nest by their ranges', () => {
+		const rewrite = createRewrite(s, 'abcdefg');
+		const placeholder = (name: string) => ({ data: name, placeholder: `<${name}>` });
+		const e = rewrite.cut(2, 6, placeholder('e'));
+		const b = rewrite.cut(3, 6, placeholder('b'));
+		const d = rewrite.cut(0, 6, placeholder('d'));
+		const a = rewrite.cut(1, 2, placeholder('a'));
+		const body = rewrite.cut(0, 7, { data: 'body' });
+		rewrite.insertBefore(7, [a, d, e, b]);
+		expect(render(body)).toBe('<d>gba<a><e>c<b>def');
 	});
 
 	test('of two cuts of one range, the later is inside the earlier', () => {
@@ -475,8 +488,12 @@ describe('construction errors', () => {
 		const body = rewrite.cut(0, 6, { data: 'body' });
 		const moved = rewrite.writer(0).cut(1, 3, { data: 'moved', placeholder: 'P' });
 		rewrite.writer(1).insertBefore(6, moved);
-		expect(() => rewrite.writer(1).cut(2, 4, { data: 'crossing' })).toThrow('crosses the cut 1..3');
 		expect(render(body)).toBe('aPdefbc');
+		const crossed = createRewrite(s, 'abcdef');
+		const crossedBody = crossed.cut(0, 6, { data: 'body' });
+		crossed.writer(0).cut(1, 3, { data: 'moved' });
+		crossed.writer(1).cut(2, 4, { data: 'crossing' });
+		expect(() => collect(crossedBody)).toThrow('The cuts 1..3 and 2..4 cross');
 	});
 });
 

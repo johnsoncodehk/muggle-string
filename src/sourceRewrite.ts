@@ -29,8 +29,8 @@ export interface RewriteWriter<Source extends RewriteSource, Data> {
 	/**
 	 * The text at `start`..`end`, with the edits of all writers in it, rendered where the returned slice is placed,
 	 * exactly once. In the cut that contains it, `placeholder` takes its place. The cuts of all writers are nested or
-	 * disjoint, and of two cuts of one range the later is inside the earlier. A zero-width cut owns no char and has no
-	 * placeholder; on an empty text, the first one renders the inserts.
+	 * disjoint, which the first render checks, and of two cuts of one range the later is inside the earlier. A
+	 * zero-width cut owns no char and has no placeholder; on an empty text, the first one renders the inserts.
 	 */
 	cut(start: number, end: number, options: RewriteCutOptions<Source, Data>): RewriteSlice<Source, Data>;
 }
@@ -161,13 +161,17 @@ class Rewrite<Source extends RewriteSource, Data> {
 	removalsSize = 0;
 	/** Whether the removals arrived in order of start. */
 	removalsSorted = true;
-	/** The top-level cuts, sorted and disjoint. */
+	/** The cuts that own chars, in call order until frozen, then sorted by start, outer first. */
+	cuts: Cut<Source, Data>[] = [];
+	/** Whether the cuts arrived sorted. */
+	cutsSorted = true;
+	/** When frozen, the top-level cuts, sorted and disjoint. */
 	roots: Cut<Source, Data>[] = [];
-	/** The last inserted cut, where the descent of the next one starts if it contains it. */
-	lastCut: Cut<Source, Data> | undefined;
 	/** On an empty text: the first zero-width cut, which renders the inserts. */
 	firstEmpty: Cut<Source, Data> | undefined;
 	frozen = false;
+	/** What the first render threw, which every render throws. */
+	error: unknown;
 
 	constructor(readonly source: Source) {
 		this.core = this.createEdits(coreRank).writer;
@@ -210,7 +214,11 @@ class Rewrite<Source extends RewriteSource, Data> {
 					}
 				}
 				else {
-					this.insertCut(cut);
+					const last = this.cuts[this.cuts.length - 1];
+					if (last && (start < last.start || (start === last.start && end > last.end))) {
+						this.cutsSorted = false;
+					}
+					this.cuts.push(cut);
 				}
 				return cut;
 			},
@@ -244,61 +252,11 @@ class Rewrite<Source extends RewriteSource, Data> {
 		this.removalsSize = size + 2;
 	}
 
-	// A cut that crosses `cut` intersects it, so it lies inside every cut that contains `cut`: the descent only checks
-	// the siblings that `cut` intersects, of the innermost cut that contains it.
-	private insertCut(cut: Cut<Source, Data>) {
-		const { start, end } = cut;
-		const last = this.lastCut;
-		let siblings = last && last.start <= start && end <= last.end ? (last.children ??= []) : this.roots;
-		while (true) {
-			let first = 0;
-			let after = siblings.length;
-			for (let high = after; first < high;) {
-				const mid = (first + high) >>> 1;
-				if (siblings[mid]!.end <= start) {
-					first = mid + 1;
-				}
-				else {
-					high = mid;
-				}
-			}
-			for (let low = first; low < after;) {
-				const mid = (low + after) >>> 1;
-				if (siblings[mid]!.start < end) {
-					low = mid + 1;
-				}
-				else {
-					after = mid;
-				}
-			}
-			if (after - first === 1 && siblings[first]!.start <= start && end <= siblings[first]!.end) {
-				siblings = siblings[first]!.children ??= [];
-				continue;
-			}
-			if (after > first) {
-				// the siblings in between lie strictly inside `cut`
-				for (const sibling of [siblings[first]!, siblings[after - 1]!]) {
-					if (sibling.start < start || sibling.end > end) {
-						throw new RangeError(
-							`The cut ${start}..${end} crosses the cut ${sibling.start}..${sibling.end}; cuts are nested or disjoint.`,
-						);
-					}
-				}
-				cut.children = siblings.splice(first, after - first, cut);
-			}
-			else if (first === siblings.length) {
-				siblings.push(cut);
-			}
-			else {
-				siblings.splice(first, 0, cut);
-			}
-			this.lastCut = cut;
-			return;
-		}
-	}
-
 	freeze() {
 		if (this.frozen) {
+			if (this.error) {
+				throw this.error;
+			}
 			return;
 		}
 		this.frozen = true;
@@ -307,6 +265,44 @@ class Rewrite<Source extends RewriteSource, Data> {
 			edits.sort();
 		}
 		this.mergeRemovals();
+		try {
+			this.buildCuts();
+		}
+		catch (error) {
+			this.error = error;
+			throw error;
+		}
+	}
+
+	/**
+	 * Nests the cuts. Sorted by start, outer first (of one range, the earlier), each cut lies in the innermost open cut
+	 * that has not ended before it starts, or crosses it.
+	 */
+	private buildCuts() {
+		const cuts = this.cuts;
+		if (!this.cutsSorted) {
+			const order = new Map(cuts.map((cut, index) => [cut, index]));
+			cuts.sort((a, b) => a.start - b.start || b.end - a.end || order.get(a)! - order.get(b)!);
+		}
+		const open: Cut<Source, Data>[] = [];
+		for (const cut of cuts) {
+			while (open.length && open[open.length - 1]!.end <= cut.start) {
+				open.pop();
+			}
+			const parent = open[open.length - 1];
+			if (!parent) {
+				this.roots.push(cut);
+			}
+			else if (cut.end > parent.end) {
+				throw new RangeError(
+					`The cuts ${parent.start}..${parent.end} and ${cut.start}..${cut.end} cross; cuts are nested or disjoint.`,
+				);
+			}
+			else {
+				(parent.children ??= []).push(cut);
+			}
+			open.push(cut);
+		}
 	}
 
 	private mergeRemovals() {
