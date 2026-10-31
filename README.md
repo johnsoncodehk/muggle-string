@@ -12,6 +12,8 @@ muggle-string comes from vuejs/language-tools. There, each Vue single-file compo
 
 ## Usage
 
+1.0 is on the `next` tag: `npm install muggle-string@next`.
+
 ```ts
 import { createSourceRewrite, rewritePieceText } from 'muggle-string';
 
@@ -37,6 +39,20 @@ rewrite.render(0, source.content.length, piece => output += rewritePieceText(pie
 ```
 
 A source is any object with `content`. Do not change the content until the rewrite is rendered.
+
+## Coming from a mutable string editor
+
+Offsets always point into the original text, also after other edits.
+
+| To | Write |
+|---|---|
+| overwrite a range | `replace(start, end, text)`, or `replace(start, end, { source, start, end, text })` to map it to the range |
+| remove a range | `replace(start, end, '')` |
+| prepend or append to the text | `insertAfter(0, code)` or `insertBefore(source.content.length, code)` |
+| insert at an offset | `insertBefore(offset, code)` or `insertAfter(offset, code)` |
+| move a range | `insertBefore(to, rewrite.cut(start, end))` |
+| read the result | `rewrite.render(0, source.content.length, piece => text += rewritePieceText(piece))` |
+| get a source map | `renderWithSourceMap`, below |
 
 ## Editing
 
