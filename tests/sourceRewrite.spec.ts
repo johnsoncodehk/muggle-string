@@ -21,7 +21,10 @@ interface TestSource {
 	content: string;
 }
 
-type TestPiece = Piece<{ source: TestSource; data: string }>;
+/** The fields of the kept pieces of a test rewrite. */
+type TestData = { data: string };
+
+type TestPiece = Piece<RewriteOrigin<TestSource, TestData>>;
 
 /** A piece whose kept range names its source. */
 type NamedPiece = Piece<{ source: TestSource | string; data: string }>;
@@ -29,25 +32,19 @@ type NamedPiece = Piece<{ source: TestSource | string; data: string }>;
 /** A source of pieces of generated code, which no rewrite edits. */
 const otherSource: TestSource = { name: other, content: 'wxyz' };
 
-/** The source of each rewrite, which its kept pieces carry. */
-const sources = new Map<SourceRewrite<TestSource, string>, TestSource>();
-
 function createRewrite(name: string, content: string) {
-	const source = { name, content };
-	const rewrite = createSourceRewrite<TestSource, string>(source);
-	sources.set(rewrite, source);
-	return rewrite;
+	return createSourceRewrite<TestSource, TestData>({ name, content });
 }
 
 /** The pieces of `slice`, as the render passes them. */
-function renderPieces(slice: RewriteSlice<TestSource, string>) {
+function renderPieces(slice: RewriteSlice<TestSource, TestData>) {
 	const pieces: TestPiece[] = [];
 	slice.render(piece => pieces.push(piece));
 	return pieces;
 }
 
 /** The pieces of `slice`: text, and kept source ranges, by the name of their source, with the data of their cut. */
-function collect(slice: RewriteSlice<TestSource, string>): NamedPiece[] {
+function collect(slice: RewriteSlice<TestSource, TestData>): NamedPiece[] {
 	return renderPieces(slice).map(piece =>
 		typeof piece === 'string' || piece.text !== undefined ? piece : { ...piece, source: piece.source.name }
 	);
@@ -57,18 +54,18 @@ function toText(pieces: TestPiece[]) {
 	return pieces.map(rewritePieceText).join('');
 }
 
-function render(slice: RewriteSlice<TestSource, string>) {
+function render(slice: RewriteSlice<TestSource, TestData>) {
 	return toText(renderPieces(slice));
 }
 
 /** The view `start`..`end` of `rewrite`, by default of the whole text, as a slice. */
 function view(
-	rewrite: SourceRewrite<TestSource, string>,
+	rewrite: SourceRewrite<TestSource, TestData>,
 	data = 'body',
 	start = 0,
-	end = sources.get(rewrite)!.content.length,
-): RewriteSlice<TestSource, string> {
-	return { render: sink => rewrite.render(start, end, sink, data) };
+	end = rewrite.source.content.length,
+): RewriteSlice<TestSource, TestData> {
+	return { render: sink => rewrite.render(start, end, sink, { data }) };
 }
 
 function alphabet(length: number) {
@@ -93,13 +90,13 @@ function keptOffsets(length: number, removals: readonly [number, number][]) {
 }
 
 /** Every kept piece is a copy, not empty; returns the source offsets of the rendered chars, in output order. */
-function renderedOffsets(rewrite: SourceRewrite<TestSource, string>, pieces: TestPiece[]) {
+function renderedOffsets(rewrite: SourceRewrite<TestSource, TestData>, pieces: TestPiece[]) {
 	return pieces.flatMap(piece => {
 		if (typeof piece === 'string') {
 			return [];
 		}
 		expect(piece).not.toHaveProperty('text');
-		expect(piece.source).toBe(sources.get(rewrite));
+		expect(piece.source).toBe(rewrite.source);
 		expect(piece.end).toBeGreaterThan(piece.start);
 		return Array.from({ length: piece.end - piece.start }, (_, index) => piece.start + index);
 	});
@@ -163,8 +160,8 @@ describe('scenarios', () => {
 		const call = text.indexOf('useFoo()');
 		const name = text.indexOf('Foo');
 		const edits = [
-			(writer: RewriteWriter<TestSource, string>) => writer.replace(call, call + 'useFoo()'.length, 'first()'),
-			(writer: RewriteWriter<TestSource, string>) => writer.replace(name, name + 'Foo'.length, 'Second'),
+			(writer: RewriteWriter<TestSource, TestData>) => writer.replace(call, call + 'useFoo()'.length, 'first()'),
+			(writer: RewriteWriter<TestSource, TestData>) => writer.replace(name, name + 'Foo'.length, 'Second'),
 		];
 		for (const order of [[0, 1], [1, 0]]) {
 			const rewrite = createRewrite(s, text);
@@ -463,14 +460,14 @@ describe('construction errors', () => {
 		rewrite.cut(3, 5, { data: 'b' });
 	});
 
-	test('a rewrite without data leaves it out of its cuts, views and pieces', () => {
+	test('a rewrite whose pieces carry no fields beyond their source takes none in its cuts and views', () => {
 		const source = { content: 'abc' };
-		const rewrite = createSourceRewrite<typeof source, undefined>(source);
+		const rewrite = createSourceRewrite(source);
 		expect(rewrite.source).toBe(source);
 		const moved = rewrite.cut(1, 2);
 		rewrite.replace(0, 1, { source, start: 0, end: 1, text: 'A' });
 		rewrite.insertBefore(3, moved);
-		const pieces: Piece<RewriteOrigin<typeof source, undefined>>[] = [];
+		const pieces: Piece<RewriteOrigin<typeof source, {}>>[] = [];
 		rewrite.render(0, 3, piece => pieces.push(piece));
 		expect(pieces.map(rewritePieceText).join('')).toBe('Acb');
 	});
@@ -486,7 +483,7 @@ describe('construction errors', () => {
 
 		const inOwnPlaceholder = createRewrite(s, 'abcdef');
 		const outer = inOwnPlaceholder.cut(1, 5, { data: 'outer' });
-		const placeholder: RewriteCode<TestSource, string>[] = [];
+		const placeholder: RewriteCode<TestSource, TestData>[] = [];
 		inOwnPlaceholder.cut(2, 3, { data: 'inner', placeholder });
 		placeholder.push(outer);
 		expect(() => collect(outer)).toThrow('The cut 1..5 is placed inside itself');
@@ -555,7 +552,7 @@ describe('construction errors', () => {
 		expect(() => rewrite.writer(0).replace(2, 1, 'x')).toThrow('The range 2..1 is out of 0..3.');
 		expect(() => rewrite.writer(0).replace(1, 1, 'x')).toThrow('The replace at 1 removes no char.');
 		expect(() => rewrite.writer(-1)).toThrow('is not a non-negative integer');
-		expect(() => rewrite.render(2, 4, () => {}, "v")).toThrow('The range 2..4 is out of 0..3.');
+		expect(() => rewrite.render(2, 4, () => {}, { data: 'v' })).toThrow('The range 2..4 is out of 0..3.');
 	});
 });
 
@@ -620,7 +617,7 @@ describe('properties', () => {
 				const tag = `#${index}`;
 				return {
 					rank,
-					apply: (writer: RewriteWriter<TestSource, string>) =>
+					apply: (writer: RewriteWriter<TestSource, TestData>) =>
 						kind === 0
 							? writer.insertBefore(offset, tag)
 							: kind === 1
@@ -791,11 +788,11 @@ function createNestedCase(random: (below: number) => number, length: number) {
 
 /** `rewrite` with the cuts and edits of the case. */
 function buildNestedCase(
-	rewrite: SourceRewrite<TestSource, string>,
+	rewrite: SourceRewrite<TestSource, TestData>,
 	{ cuts, edits }: ReturnType<typeof createNestedCase>,
 	random: (below: number) => number,
 ) {
-	const slices: RewriteSlice<TestSource, string>[] = [];
+	const slices: RewriteSlice<TestSource, TestData>[] = [];
 	// in a random order, but of two cuts of one range the earlier first, as it holds the later
 	const order = cuts.map(cut => ({ cut, key: random(cuts.length + 1) }))
 		.sort((a, b) => a.key - b.key)
@@ -803,7 +800,7 @@ function buildNestedCase(
 	const ofRange = (cut: NestedCut) => order.filter(other => other.start === cut.start && other.end === cut.end);
 	for (const cut of order.map(cut => ofRange(cut).sort((a, b) => a.id - b.id)[ofRange(cut).indexOf(cut)]!)) {
 		// a cut not placed elsewhere renders in its own placeholder, which code reads when it renders
-		const inPlace: RewriteCode<TestSource, string>[] = [];
+		const inPlace: RewriteCode<TestSource, TestData>[] = [];
 		const placeholder = cut.place ? `<P${cut.id}>` : inPlace;
 		slices[cut.id] = rewrite.cut(cut.start, cut.end, { data: `cut${cut.id}`, placeholder });
 		inPlace.push('<', slices[cut.id]!, '>');

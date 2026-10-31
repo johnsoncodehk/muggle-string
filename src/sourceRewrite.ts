@@ -1,13 +1,10 @@
 import type { Piece, RewriteSource } from './types';
 
 /**
- * The data of the kept pieces of a rewrite, where it has some: a rewrite whose data admits `undefined` has none to
- * give, so it leaves the field out.
+ * What a range of a rewrite carries beyond its offsets: its source, and the fields of the consumer that the view or the
+ * slice that renders it gives, none by default.
  */
-export type RewriteData<Data> = undefined extends Data ? { data?: Data } : { data: Data };
-
-/** What a range of a rewrite carries beyond its offsets: its source, and the data of the rewrite. */
-export type RewriteOrigin<Source extends RewriteSource, Data> = { source: Source } & RewriteData<Data>;
+export type RewriteOrigin<Source extends RewriteSource, Data> = Data & { source: Source };
 
 /** Code written into a rewrite: pieces, slices, which render their cut in place, and arrays of code. */
 export type RewriteCode<Source extends RewriteSource, Data> =
@@ -15,7 +12,8 @@ export type RewriteCode<Source extends RewriteSource, Data> =
 	| RewriteSlice<Source, Data>
 	| readonly RewriteCode<Source, Data>[];
 
-export type RewriteCutOptions<Source extends RewriteSource, Data> = RewriteData<Data> & {
+/** The fields of the kept pieces of the cut, and its placeholder. */
+export type RewriteCutOptions<Source extends RewriteSource, Data> = Data & {
 	/** The code that takes the place of the cut in the cut that contains it. */
 	placeholder?: RewriteCode<Source, Data>;
 };
@@ -55,7 +53,7 @@ export interface SourceRewrite<Source extends RewriteSource, Data> extends Rewri
 	writer(rank: number): RewriteWriter<Source, Data>;
 	/**
 	 * The slice of `start`..`end` (not empty): its text, with the edits of all writers in it, renders where the slice is
-	 * placed, exactly once, with `data`, and `placeholder` takes its place where it is cut from. Cuts are made in any
+	 * placed, exactly once, kept text with the other fields of `options`, and `placeholder` takes its place where it is cut from. Cuts are made in any
 	 * order: a cut inside another moves with it, of two cuts of one range the later is inside, and a cut that crosses
 	 * another throws. Text that is not wanted is removed by `replace`; a slice is cut to be placed, and `unrendered`
 	 * tells one that is not.
@@ -67,20 +65,20 @@ export interface SourceRewrite<Source extends RewriteSource, Data> extends Rewri
 	cut(
 		start: number,
 		end: number,
-		...options: undefined extends Data ? [options?: RewriteCutOptions<Source, Data>]
+		...options: {} extends RewriteCutOptions<Source, Data> ? [options?: RewriteCutOptions<Source, Data>]
 			: [options: RewriteCutOptions<Source, Data>]
 	): RewriteSlice<Source, Data>;
 	/**
-	 * Passes the pieces of the text at `start`..`end`, with the edits in it, to `sink`, kept text with `data`: a view,
-	 * which owns no text, so views can overlap and render again. The text of a slice renders where the slice is
-	 * placed, and its placeholder in the view of its start. The code before all text renders in a view from 0, and the
-	 * code after all text in a view to the end of the text.
+	 * Passes the pieces of the text at `start`..`end`, with the edits in it, to `sink`, kept text with the fields of
+	 * `data`: a view, which owns no text, so views can overlap and render again. The text of a slice renders where the
+	 * slice is placed, and its placeholder in the view of its start. The code before all text renders in a view from 0,
+	 * and the code after all text in a view to the end of the text.
 	 */
 	render(
 		start: number,
 		end: number,
 		sink: (piece: Piece<RewriteOrigin<Source, Data>>) => void,
-		...data: undefined extends Data ? [data?: Data] : [data: Data]
+		...data: {} extends Data ? [data?: Data] : [data: Data]
 	): void;
 	/**
 	 * The slices that have not rendered, in cut order: after the last render of its consumer, those that it placed
@@ -89,17 +87,23 @@ export interface SourceRewrite<Source extends RewriteSource, Data> extends Rewri
 	unrendered(): RewriteSlice<Source, Data>[];
 }
 
-/** A rewrite of the content of `source`, which must not change until the rewrite is rendered. */
-export function createSourceRewrite<Source extends RewriteSource, Data>(source: Source): SourceRewrite<Source, Data> {
+/**
+ * A rewrite of the content of `source`, which must not change until the rewrite is rendered. `Data` is the fields that
+ * its kept pieces carry beyond their source and offsets, which the cuts and views give.
+ */
+export function createSourceRewrite<
+	Source extends RewriteSource,
+	Data extends object = {},
+>(source: Source): SourceRewrite<Source, Data> {
 	const rewrite = new Rewrite<Source, Data>(source);
 	return {
 		...rewrite.core,
 		source,
 		writer: rank => rewrite.writer(rank),
 		cut: (start: number, end: number, options?: RewriteCutOptions<Source, Data>) =>
-			rewrite.cut(start, end, (options ?? {}) as { data?: Data; placeholder?: RewriteCode<Source, Data> }),
+			rewrite.cut(start, end, (options ?? {}) as RewriteCutOptions<Source, Data>),
 		render: (start: number, end: number, sink: Sink<Source, Data>, data?: Data) =>
-			rewrite.render(start, end, data as Data, sink),
+			rewrite.render(start, end, data ?? {} as Data, sink),
 		unrendered: () => rewrite.cuts.filter(cut => cut.state === CutState.Unrendered),
 	};
 }
@@ -262,7 +266,7 @@ class Rewrite<Source extends RewriteSource, Data> {
 	 * The cut of `start`..`end`, inside the innermost cut that holds the range, around the cuts in the range; the cuts
 	 * of each level stay sorted and disjoint.
 	 */
-	cut(start: number, end: number, options: { data?: Data; placeholder?: RewriteCode<Source, Data> }) {
+	cut(start: number, end: number, { placeholder, ...data }: RewriteCutOptions<Source, Data>) {
 		if (this.frozen) {
 			throw new Error('The rewrite is already rendered.');
 		}
@@ -297,7 +301,7 @@ class Rewrite<Source extends RewriteSource, Data> {
 					throw new RangeError(`The cut ${start}..${end} crosses ${nameCut(inner).toLowerCase()}.`);
 				}
 			}
-			const cut = new Cut<Source, Data>(this, parent, start, end, options.data as Data, options.placeholder);
+			const cut = new Cut<Source, Data>(this, parent, start, end, data as Data, placeholder);
 			const held = siblings.splice(low, last - low, cut);
 			if (held.length) {
 				cut.children = held;
@@ -611,7 +615,7 @@ class Walker<Source extends RewriteSource, Data> {
 		this.removal = low * 2;
 	}
 
-	/** The kept chars from `pos` to `to`, with `data`. */
+	/** The kept chars from `pos` to `to`, with the fields of `data`. */
 	keep(to: number, data: Data) {
 		const { removals, removalsSize: size, sink, source } = this;
 		let { pos, removal } = this;
@@ -624,7 +628,7 @@ class Walker<Source extends RewriteSource, Data> {
 				continue;
 			}
 			const stop = removal < size && removals[removal]! < to ? removals[removal]! : to;
-			sink({ source, start: pos, end: stop, data });
+			sink({ ...data, source, start: pos, end: stop });
 			pos = stop;
 		}
 		this.pos = pos;
