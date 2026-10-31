@@ -17,24 +17,26 @@ muggle-string has no dependencies and knows no mapping format: a rewrite renders
 ## Usage
 
 ```ts
-import { createSourceRewrite } from 'muggle-string';
+import { createSourceRewrite, rewritePieceText } from 'muggle-string';
 
-const text = 'log(name);\nconst name = "Ada";\n';
-const rewrite = createSourceRewrite<string, string>('main.js', text);
+const source = { name: 'main.js', content: 'log(name);\nconst name = "Ada";\n' };
+const rewrite = createSourceRewrite<typeof source, string>(source);
 
-for (const { index } of text.matchAll(/\bname\b/g)) {
+for (const { index } of source.content.matchAll(/\bname\b/g)) {
 	rewrite.replace(index, index + 'name'.length, 'user');
 }
 
-const file = rewrite.cut(0, text.length, { data: 'file' });
-const declaration = rewrite.cut(text.indexOf('const'), text.length, { data: 'declaration' });
+const file = rewrite.cut(0, source.content.length, { data: 'file' });
+const declaration = rewrite.cut(source.content.indexOf('const'), source.content.length, { data: 'declaration' });
 rewrite.insertBefore(0, declaration);
 
 let output = '';
-file.render(piece => output += typeof piece === 'string' ? piece : piece.text ?? text.slice(piece.start, piece.end));
+file.render(piece => output += rewritePieceText(piece));
 // const user = "Ada";
 // log(user);
 ```
+
+A source is any object with the `content` that it rewrites, and the ranges of its pieces carry it as their `source`, so a consumer reads their text there. The content must not change until the rewrite is rendered.
 
 ## Pieces
 
@@ -44,7 +46,7 @@ type Piece<Origin = unknown> = string | (Origin & { start: number; end: number; 
 
 A string is new text, which maps nowhere. An object is the range `start`..`end` of a source text: without `text` it copies the text there, and with `text` it is generated text that stands for the range, mapped as the consumer of the pieces decides.
 
-`Origin` is what a range carries beyond its offsets. A producer of one source and no data, such as [muggle-pug](https://github.com/johnsoncodehk/muggle-pug), emits `Piece`, whose ranges are only offsets: its consumer knows the source. The code of a rewrite can mix sources, so its pieces are `Piece<{ source: Source; data: Data }>`, and its kept text renders as ranges without `text`, with the data of the cut that owns them.
+`Origin` is what a range carries beyond its offsets. A producer of one source and no data, such as [muggle-pug](https://github.com/johnsoncodehk/muggle-pug), emits `Piece`, whose ranges are only offsets: its consumer knows the source. The code of a rewrite can mix sources, so its pieces are `Piece<{ source: Source; data: Data }>`, where `Source` is a `RewriteSource`, and its kept text renders as ranges without `text`, with the data of the cut that owns them. `rewritePieceText(piece)` gives the generated text of such a piece: a string, the `text` of a range, or the content of its source that it keeps.
 
 Code is a piece of a rewrite, a slice, which renders its cut in place, or an array of code.
 
@@ -59,16 +61,21 @@ slice.render(piece => pieces.push(piece));
 
 ## Source maps
 
-muggle-string builds no source map, but a sink can. In place of the sink of the usage above, this one tracks the line and column of the generated text and adds v3 segments with [`@jridgewell/gen-mapping`](https://github.com/jridgewell/sourcemaps/tree/main/packages/gen-mapping): new text maps nowhere, the `text` of a range maps as a whole to its start, and kept text maps at the start of each of its lines, so every column of it maps. With several sources, look up the text and the line starts by `piece.source`.
+muggle-string builds no source map, but a sink can. In place of the sink of the usage above, this one tracks the line and column of the generated text and adds v3 segments with [`@jridgewell/gen-mapping`](https://github.com/jridgewell/sourcemaps/tree/main/packages/gen-mapping): new text maps nowhere, the `text` of a range maps as a whole to its start, and kept text maps at the start of each of its lines, so every column of it maps. The line starts of each source are computed once, by the source that a range carries.
 
 ```ts
 import { addMapping, GenMapping, toEncodedMap } from '@jridgewell/gen-mapping';
 
-const lineStarts = [0, ...Array.from(text.matchAll(/\n/g), match => match.index + 1)];
-const toOriginal = (offset: number) => {
-	let line = lineStarts.length - 1;
-	while (lineStarts[line] > offset) line--;
-	return { line: line + 1, column: offset - lineStarts[line] };
+const lineStarts = new WeakMap<typeof source, number[]>();
+const toOriginal = (from: typeof source, offset: number) => {
+	let starts = lineStarts.get(from);
+	if (!starts) {
+		starts = [0, ...Array.from(from.content.matchAll(/\n/g), match => match.index + 1)];
+		lineStarts.set(from, starts);
+	}
+	let line = starts.length - 1;
+	while (starts[line] > offset) line--;
+	return { line: line + 1, column: offset - starts[line] };
 };
 
 const map = new GenMapping({ file: 'main.out.js' });
@@ -76,7 +83,7 @@ let output = '';
 let line = 1;
 let column = 0;
 file.render(piece => {
-	const value = typeof piece === 'string' ? piece : piece.text ?? text.slice(piece.start, piece.end);
+	const value = rewritePieceText(piece);
 	const kept = typeof piece !== 'string' && piece.text === undefined;
 	let offset = 0;
 	value.split('\n').forEach((part, i) => {
@@ -88,8 +95,8 @@ file.render(piece => {
 			addMapping(map, { generated: { line, column } });
 		}
 		else if (part && typeof piece !== 'string' && (i === 0 || kept)) {
-			const original = toOriginal(piece.start + (kept ? offset : 0));
-			addMapping(map, { generated: { line, column }, source: piece.source, original });
+			const original = toOriginal(piece.source, piece.start + (kept ? offset : 0));
+			addMapping(map, { generated: { line, column }, source: piece.source.name, original });
 		}
 		offset += part.length + 1;
 		column += part.length;
