@@ -56,3 +56,46 @@ Code is a piece of a rewrite, a slice, which renders its cut in place, or an arr
 const pieces: Piece<{ source: string; data: string }>[] = [];
 slice.render(piece => pieces.push(piece));
 ```
+
+## Source maps
+
+muggle-string builds no source map, but a sink can. In place of the sink of the usage above, this one tracks the line and column of the generated text and adds v3 segments with [`@jridgewell/gen-mapping`](https://github.com/jridgewell/sourcemaps/tree/main/packages/gen-mapping): new text maps nowhere, the `text` of a range maps as a whole to its start, and kept text maps at the start of each of its lines, so every column of it maps. With several sources, look up the text and the line starts by `piece.source`.
+
+```ts
+import { addMapping, GenMapping, toEncodedMap } from '@jridgewell/gen-mapping';
+
+const lineStarts = [0, ...Array.from(text.matchAll(/\n/g), match => match.index + 1)];
+const toOriginal = (offset: number) => {
+	let line = lineStarts.length - 1;
+	while (lineStarts[line] > offset) line--;
+	return { line: line + 1, column: offset - lineStarts[line] };
+};
+
+const map = new GenMapping({ file: 'main.out.js' });
+let output = '';
+let line = 1;
+let column = 0;
+file.render(piece => {
+	const value = typeof piece === 'string' ? piece : piece.text ?? text.slice(piece.start, piece.end);
+	const kept = typeof piece !== 'string' && piece.text === undefined;
+	let offset = 0;
+	value.split('\n').forEach((part, i) => {
+		if (i) {
+			line++;
+			column = 0;
+		}
+		if (part && typeof piece === 'string' && i === 0) {
+			addMapping(map, { generated: { line, column } });
+		}
+		else if (part && typeof piece !== 'string' && (i === 0 || kept)) {
+			const original = toOriginal(piece.start + (kept ? offset : 0));
+			addMapping(map, { generated: { line, column }, source: piece.source, original });
+		}
+		offset += part.length + 1;
+		column += part.length;
+	});
+	output += value;
+});
+const sourceMap = toEncodedMap(map);
+// {"version":3,"file":"main.out.js","sources":["main.js"],"mappings":"AACA,M,IAAU;AADV,I,IAAQ",...}
+```
