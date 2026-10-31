@@ -557,18 +557,6 @@ describe('construction errors', () => {
 		expect(() => render(view(placing))).toThrow('The cut 1..2 is placed twice.');
 	});
 
-	test('the data of a cut can be left out when undefined is a data', () => {
-		const source = { content: 'abc' };
-		const rewrite = createSourceRewrite<typeof source, string | undefined>(source);
-		const pieces: Piece<{ source: typeof source; data: string | undefined }>[] = [];
-		const { slice: whole } = rewrite.root.cut(0, 3, {});
-		whole.cut(1, 2, { placeholder: 'P' });
-		whole.render(piece => pieces.push(piece));
-		expect(pieces).toEqual([{ source, start: 0, end: 1, data: undefined }, 'P', { source, start: 2, end: 3, data: undefined }]);
-		// @ts-expect-error
-		createSourceRewrite<typeof source, string>(source).root.cut(0, 3, {});
-	});
-
 	test('an edit after the first render is an error', () => {
 		const rewrite = createRewrite(s, 'abc');
 		const body = view(rewrite);

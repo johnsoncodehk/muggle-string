@@ -46,13 +46,6 @@ export interface RewritePart<Source extends RewriteSource, Data> {
 	 * rendered is not rendered, without an error.
 	 */
 	cut(start: number, end: number, options: RewriteCutOptions<Source, Data>): RewriteCut<Source, Data>;
-	/** A cut whose kept pieces have `undefined` as data, by a rewrite whose data can be `undefined`. */
-	cut(
-		this: { cut(start: number, end: number, options: RewriteCutOptions<Source, undefined>): unknown },
-		start: number,
-		end: number,
-		options: Omit<RewriteCutOptions<Source, Data>, 'data'>,
-	): RewriteCut<Source, Data>;
 }
 
 /** The parts that a cut splits a part into. */
@@ -259,7 +252,7 @@ class Rewrite<Source extends RewriteSource, Data> {
 	}
 
 	/** Splits `part` at `start`..`end`. */
-	cut(part: Part<Source, Data>, start: number, end: number, options: Partial<RewriteCutOptions<Source, Data>>): RewriteCut<Source, Data> {
+	cut(part: Part<Source, Data>, start: number, end: number, options: RewriteCutOptions<Source, Data>): RewriteCut<Source, Data> {
 		if (this.frozen) {
 			throw new Error('The rewrite is already rendered.');
 		}
@@ -272,8 +265,7 @@ class Rewrite<Source extends RewriteSource, Data> {
 		}
 		part.used = true;
 		const { holder } = part;
-		// `data` is left out only by a rewrite whose data can be `undefined`
-		const cut = new Cut(this, holder, start, end, options.data as Data, options.placeholder);
+		const cut = new Cut(this, holder, start, end, options.data, options.placeholder);
 		(holder ? holder.children ??= [] : this.roots).push(cut);
 		this.cuts.push(cut);
 		return { before: new Part(this, holder, part.start, start), slice: cut, after: new Part(this, holder, end, part.end) };
@@ -527,7 +519,7 @@ class Part<Source extends RewriteSource, Data> implements RewritePart<Source, Da
 		readonly end: number,
 	) {}
 
-	cut(start: number, end: number, options: Partial<RewriteCutOptions<Source, Data>>) {
+	cut(start: number, end: number, options: RewriteCutOptions<Source, Data>) {
 		return this.rewrite.cut(this, start, end, options);
 	}
 }
