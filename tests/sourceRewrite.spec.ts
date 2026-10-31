@@ -5,9 +5,7 @@ import {
 	createSourceRewrite,
 	type Piece,
 	type RewriteCode,
-	type RewriteCutOptions,
 	type RewriteOrigin,
-	type RewritePart,
 	type RewriteSlice,
 	type RewriteWriter,
 	rewritePieceText,
@@ -31,8 +29,14 @@ type NamedPiece = Piece<{ source: TestSource | string; data: string }>;
 /** A source of pieces of generated code, which no rewrite edits. */
 const otherSource: TestSource = { name: other, content: 'wxyz' };
 
+/** The source of each rewrite, which its kept pieces carry. */
+const sources = new Map<SourceRewrite<TestSource, string>, TestSource>();
+
 function createRewrite(name: string, content: string) {
-	return createSourceRewrite<TestSource, string>({ name, content });
+	const source = { name, content };
+	const rewrite = createSourceRewrite<TestSource, string>(source);
+	sources.set(rewrite, source);
+	return rewrite;
 }
 
 /** The pieces of `slice`, as the render passes them. */
@@ -62,20 +66,9 @@ function view(
 	rewrite: SourceRewrite<TestSource, string>,
 	data = 'body',
 	start = 0,
-	end = rewrite.source.content.length,
+	end = sources.get(rewrite)!.content.length,
 ): RewriteSlice<TestSource, string> {
 	return { render: sink => rewrite.render(start, end, sink, data) };
-}
-
-/** Cuts a range from the part of `rewrite` that holds it, of the parts that the cuts before left; outer cuts first. */
-function createCutter(rewrite: SourceRewrite<TestSource, string>) {
-	const parts: RewritePart<TestSource, string>[] = [rewrite.root];
-	return (start: number, end: number, options: RewriteCutOptions<TestSource, string>) => {
-		const index = parts.findIndex(part => part.start <= start && start < part.end && end <= part.end);
-		const { before, slice, after } = parts[index]!.cut(start, end, options);
-		parts.splice(index, 1, before, slice, after);
-		return slice;
-	};
 }
 
 function alphabet(length: number) {
@@ -106,7 +99,7 @@ function renderedOffsets(rewrite: SourceRewrite<TestSource, string>, pieces: Tes
 			return [];
 		}
 		expect(piece).not.toHaveProperty('text');
-		expect(piece.source).toBe(rewrite.source);
+		expect(piece.source).toBe(sources.get(rewrite));
 		expect(piece.end).toBeGreaterThan(piece.start);
 		return Array.from({ length: piece.end - piece.start }, (_, index) => piece.start + index);
 	});
@@ -127,7 +120,7 @@ function defineProps(text: string, statement = 'const') {
 	const rewrite = createRewrite(setup, text);
 	const body = view(rewrite);
 	const typeArg = { start: text.indexOf('{'), end: text.lastIndexOf('}') + 1 };
-	const { slice: alias } = rewrite.root.cut(typeArg.start, typeArg.end, { data: 'alias', placeholder: '__VLS_Props' });
+	const alias = rewrite.cut(typeArg.start, typeArg.end, { data: 'alias', placeholder: '__VLS_Props' });
 	rewrite.insertBefore(text.indexOf(statement), ['type __VLS_Props = ', alias, ';\n']);
 	return { rewrite, body, typeArg };
 }
@@ -274,7 +267,7 @@ describe('scenarios', () => {
 	test('a slice of another rewrite renders the text and edits of its own rewrite', () => {
 		const inner = createRewrite(other, 'xyz');
 		inner.writer(0).replace(1, 2, 'Y');
-		const { slice } = inner.root.cut(0, 3, { data: 'inner' });
+		const slice = inner.cut(0, 3, { data: 'inner' });
 		const rewrite = createRewrite(s, 'abc');
 		rewrite.writer(0).replace(0, 1, 'A');
 		const body = view(rewrite);
@@ -299,7 +292,7 @@ describe('scenarios', () => {
 	test('removals of two writers that overlap the edges of a moved cut remove the chars of both cuts', () => {
 		const rewrite = createRewrite(s, 'abcdefgh');
 		const body = view(rewrite);
-		rewrite.insertAfter(8, rewrite.root.cut(2, 6, { data: 'inner', placeholder: 'P' }).slice);
+		rewrite.insertAfter(8, rewrite.cut(2, 6, { data: 'inner', placeholder: 'P' }));
 		rewrite.writer(0).replace(1, 4, 'X');
 		rewrite.writer(1).replace(3, 7, 'Y');
 		expect(render(body)).toBe('aXPhY');
@@ -350,7 +343,7 @@ describe('text edges', () => {
 	test('code at the end of the text stays after all text when a cut that ends there moves', () => {
 		const rewrite = createRewrite(s, 'abcdefgh');
 		const body = view(rewrite);
-		const { slice: last } = rewrite.root.cut(5, 8, { data: 'last' });
+		const last = rewrite.cut(5, 8, { data: 'last' });
 		rewrite.insertAfter(0, last);
 		rewrite.insertBefore(8, 'X');
 		rewrite.insertAfter(8, 'Y');
@@ -360,7 +353,7 @@ describe('text edges', () => {
 	test('code at the start of the text stays before all text when a cut that starts there moves', () => {
 		const rewrite = createRewrite(s, 'abcdefgh');
 		const body = view(rewrite);
-		const { slice: first } = rewrite.root.cut(0, 3, { data: 'first' });
+		const first = rewrite.cut(0, 3, { data: 'first' });
 		rewrite.insertBefore(8, first);
 		rewrite.insertAfter(0, 'X');
 		rewrite.insertBefore(0, 'Y');
@@ -416,8 +409,8 @@ describe('runs', () => {
 	test('a slice that is not placed does not render, with the code in it, which unrendered tells until it renders', () => {
 		const rewrite = createRewrite(s, 'abcdef');
 		const body = view(rewrite);
-		const { slice: placed, after } = rewrite.root.cut(0, 1, { data: 'placed' });
-		const { slice: unplaced } = after.cut(2, 4, { data: 'unplaced' });
+		const placed = rewrite.cut(0, 1, { data: 'placed' });
+		const unplaced = rewrite.cut(2, 4, { data: 'unplaced' });
 		rewrite.insertBefore(0, 'x');
 		rewrite.insertBefore(3, 'y');
 		rewrite.insertAfter(6, ['z', placed]);
@@ -432,8 +425,8 @@ describe('runs', () => {
 	test('a cut that is placed in code in a cut placed elsewhere renders there', () => {
 		const rewrite = createRewrite(s, 'abcdef');
 		const body = view(rewrite);
-		const { slice: outer } = rewrite.root.cut(1, 5, { data: 'outer', placeholder: 'O' });
-		const { slice: inner } = outer.cut(2, 3, { data: 'inner', placeholder: 'I' });
+		const outer = rewrite.cut(1, 5, { data: 'outer', placeholder: 'O' });
+		const inner = rewrite.cut(2, 3, { data: 'inner', placeholder: 'I' });
 		rewrite.insertAfter(3, ['[', outer, ']']);
 		rewrite.insertBefore(6, ['{', inner, '}']);
 		expect(render(body)).toBe('aOf{c[bIde]}');
@@ -441,37 +434,40 @@ describe('runs', () => {
 });
 
 describe('construction errors', () => {
-	test('a cut splits its part into the part before, the slice and the part after, which further cuts cut', () => {
+	test('cuts in any order nest by range: a later cut around earlier ones holds them', () => {
 		const rewrite = createRewrite(s, 'abcdefg');
-		const { before, slice, after } = rewrite.root.cut(2, 5, { data: 'b', placeholder: '<b>' });
-		expect([before, slice, after].map(({ start, end }) => [start, end])).toEqual([[0, 2], [2, 5], [5, 7]]);
-		const { slice: a } = before.cut(0, 1, { data: 'a', placeholder: '<a>' });
-		const { slice: c } = slice.cut(3, 4, { data: 'c', placeholder: '<c>' });
-		rewrite.insertBefore(7, [a, slice, c]);
+		const a = rewrite.cut(0, 1, { data: 'a', placeholder: '<a>' });
+		const c = rewrite.cut(3, 4, { data: 'c', placeholder: '<c>' });
+		const b = rewrite.cut(2, 5, { data: 'b', placeholder: '<b>' });
+		rewrite.insertBefore(7, [a, b, c]);
 		expect(render(view(rewrite))).toBe('<a>b<b>fgac<c>ed');
 	});
 
-	test('a cut of the whole range of a slice is inside it', () => {
+	test('of two cuts of one range, the later is inside the earlier', () => {
 		const rewrite = createRewrite(s, 'abc');
-		const { slice: outer } = rewrite.root.cut(0, 3, { data: 'outer' });
-		const { slice: inner } = outer.cut(0, 3, { data: 'inner', placeholder: 'P' });
+		const outer = rewrite.cut(0, 3, { data: 'outer' });
+		const inner = rewrite.cut(0, 3, { data: 'inner', placeholder: 'P' });
 		expect(collect(outer)).toEqual(['P']);
 		expect(collect(inner)).toEqual([{ source: s, start: 0, end: 3, data: 'inner' }]);
 	});
 
-	test('a cut of a used part, out of its part or of no char is an error', () => {
+	test('a cut that crosses another, out of the text or of no char is an error', () => {
 		const rewrite = createRewrite(s, 'abcdef');
-		const { after } = rewrite.root.cut(1, 3, { data: 'a' });
-		expect(() => rewrite.root.cut(4, 5, { data: 'b' })).toThrow('The part 0..6 is already cut; cut its parts.');
-		expect(() => after.cut(2, 4, { data: 'b' })).toThrow('The range 2..4 is out of the part 3..6.');
-		expect(() => after.cut(4, 4, { data: 'b' })).toThrow('The cut at 4 moves no char.');
-		after.cut(4, 5, { data: 'b' });
+		rewrite.cut(1, 3, { data: 'a' });
+		rewrite.cut(1, 2, { data: 'inner' });
+		expect(() => rewrite.cut(2, 4, { data: 'b' })).toThrow('The cut 2..4 crosses the cut 1..3.');
+		expect(() => rewrite.cut(0, 2, { data: 'b' })).toThrow('The cut 0..2 crosses the cut 1..3.');
+		expect(() => rewrite.cut(2, 7, { data: 'b' })).toThrow('The range 2..7 is out of 0..6.');
+		expect(() => rewrite.cut(4, 4, { data: 'b' })).toThrow('The cut at 4 moves no char.');
+		rewrite.cut(0, 3, { data: 'b' });
+		rewrite.cut(3, 5, { data: 'b' });
 	});
 
 	test('a rewrite without data leaves it out of its cuts, views and pieces', () => {
 		const source = { content: 'abc' };
 		const rewrite = createSourceRewrite<typeof source, undefined>(source);
-		const { slice: moved } = rewrite.root.cut(1, 2);
+		expect(rewrite.source).toBe(source);
+		const moved = rewrite.cut(1, 2);
 		rewrite.replace(0, 1, { source, start: 0, end: 1, text: 'A' });
 		rewrite.insertBefore(3, moved);
 		const pieces: Piece<RewriteOrigin<typeof source, undefined>>[] = [];
@@ -482,23 +478,23 @@ describe('construction errors', () => {
 	test('a cut placed in code that only its own render renders is an error at the first render', () => {
 		const inOwnRange = createRewrite(s, 'abcdef');
 		const body = view(inOwnRange);
-		const { slice: cut } = inOwnRange.root.cut(1, 4, { data: 'cut' });
+		const cut = inOwnRange.cut(1, 4, { data: 'cut' });
 		inOwnRange.insertBefore(2, cut);
 		const message = 'The cut 1..4 is placed inside itself, so it never renders.';
 		expect(() => collect(body)).toThrow(message);
 		expect(() => collect(cut)).toThrow(message);
 
 		const inOwnPlaceholder = createRewrite(s, 'abcdef');
-		const { slice: outer } = inOwnPlaceholder.root.cut(1, 5, { data: 'outer' });
+		const outer = inOwnPlaceholder.cut(1, 5, { data: 'outer' });
 		const placeholder: RewriteCode<TestSource, string>[] = [];
-		outer.cut(2, 3, { data: 'inner', placeholder });
+		inOwnPlaceholder.cut(2, 3, { data: 'inner', placeholder });
 		placeholder.push(outer);
 		expect(() => collect(outer)).toThrow('The cut 1..5 is placed inside itself');
 
 		const inEachOther = createRewrite(s, 'abcdef');
-		const { slice: whole } = inEachOther.root.cut(0, 6, { data: 'whole' });
-		const { slice: first, after } = whole.cut(1, 2, { data: 'first' });
-		const { slice: second } = after.cut(3, 4, { data: 'second' });
+		const whole = inEachOther.cut(0, 6, { data: 'whole' });
+		const first = inEachOther.cut(1, 2, { data: 'first' });
+		const second = inEachOther.cut(3, 4, { data: 'second' });
 		inEachOther.insertBefore(1, second);
 		inEachOther.insertBefore(3, first);
 		expect(() => collect(whole)).toThrow('is placed inside itself');
@@ -507,8 +503,8 @@ describe('construction errors', () => {
 	test('a cut that its own render places is an error, also across rewrites', () => {
 		const a = createRewrite(s, 'abc');
 		const b = createRewrite(other, 'xyz');
-		const { slice: aCut } = a.root.cut(0, 3, { data: 'a' });
-		const { slice: bCut } = b.root.cut(0, 3, { data: 'b' });
+		const aCut = a.cut(0, 3, { data: 'a' });
+		const bCut = b.cut(0, 3, { data: 'b' });
 		a.insertBefore(1, bCut);
 		b.insertBefore(1, aCut);
 		expect(() => collect(aCut)).toThrow('The cut 0..3 is placed inside itself, so it never renders.');
@@ -516,20 +512,20 @@ describe('construction errors', () => {
 
 	test('rendering a cut again is an error that tells how', () => {
 		const rewrite = createRewrite(s, 'abc');
-		const { slice: body } = rewrite.root.cut(0, 3, { data: 'body' });
+		const body = rewrite.cut(0, 3, { data: 'body' });
 		collect(body);
 		expect(() => collect(body)).toThrow('The cut 0..3 is already rendered; a slice renders once.');
 
 		const twice = createRewrite(s, 'abc');
 		const whole = view(twice);
-		const { slice: moved } = twice.root.cut(1, 2, { data: 'moved' });
+		const moved = twice.cut(1, 2, { data: 'moved' });
 		twice.insertBefore(0, moved);
 		twice.insertBefore(3, moved);
 		expect(() => collect(whole)).toThrow('The cut 1..2 is placed twice.');
 
 		const placedAfter = createRewrite(s, 'abc');
 		const after = view(placedAfter);
-		const { slice: early } = placedAfter.root.cut(1, 2, { data: 'early' });
+		const early = placedAfter.cut(1, 2, { data: 'early' });
 		placedAfter.insertBefore(3, early);
 		collect(early);
 		expect(() => collect(after)).toThrow('The cut 1..2 is already rendered; a slice renders once.');
@@ -540,7 +536,7 @@ describe('construction errors', () => {
 		rewrite.insertBefore(1, 'x');
 		expect([render(view(rewrite)), render(view(rewrite))]).toEqual(['axbc', 'axbc']);
 		const placing = createRewrite(s, 'abc');
-		placing.insertBefore(0, placing.root.cut(1, 2, { data: 'moved' }).slice);
+		placing.insertBefore(0, placing.cut(1, 2, { data: 'moved' }));
 		expect(render(view(placing))).toBe('bac');
 		expect(() => render(view(placing))).toThrow('The cut 1..2 is placed twice.');
 	});
@@ -550,7 +546,7 @@ describe('construction errors', () => {
 		const body = view(rewrite);
 		collect(body);
 		expect(() => rewrite.writer(0).insertBefore(1, 'x')).toThrow('The rewrite is already rendered.');
-		expect(() => rewrite.root.cut(1, 2, { data: 'late' })).toThrow('The rewrite is already rendered.');
+		expect(() => rewrite.cut(1, 2, { data: 'late' })).toThrow('The rewrite is already rendered.');
 	});
 
 	test('offsets out of the text, an empty replace and an invalid rank are errors', () => {
@@ -559,7 +555,7 @@ describe('construction errors', () => {
 		expect(() => rewrite.writer(0).replace(2, 1, 'x')).toThrow('The range 2..1 is out of 0..3.');
 		expect(() => rewrite.writer(0).replace(1, 1, 'x')).toThrow('The replace at 1 removes no char.');
 		expect(() => rewrite.writer(-1)).toThrow('is not a non-negative integer');
-		expect(() => rewrite.render(2, 4, () => {}, 'v')).toThrow('The range 2..4 is out of 0..3.');
+		expect(() => rewrite.render(2, 4, () => {}, "v")).toThrow('The range 2..4 is out of 0..3.');
 	});
 });
 
@@ -574,7 +570,7 @@ describe('properties', () => {
 			if (length > 2 && random(2)) {
 				const start = 1 + random(length - 2);
 				const end = start + 1 + random(length - start - 1);
-				const { slice: cut } = rewrite.root.cut(start, end, { data: 'moved', placeholder: '<P>' });
+				const cut = rewrite.cut(start, end, { data: 'moved', placeholder: '<P>' });
 				moved = { start, end };
 				rewrite.insertBefore(random(start + 1) === start ? 0 : random(start), ['{', cut, '}']);
 			}
@@ -663,7 +659,7 @@ describe('properties', () => {
 				nested++;
 			}
 			const rewrite = createRewrite(s, alphabet(length));
-			const segments = renderPieces(view(buildNestedCase(rewrite, testCase), 'root'));
+			const segments = renderPieces(view(buildNestedCase(rewrite, testCase, random), 'root'));
 			expectMinimalRuns(segments);
 			const offsets = renderedOffsets(rewrite, segments);
 			const removals = testCase.edits.flatMap(edit =>
@@ -694,8 +690,8 @@ describe('properties', () => {
 			// views of no char from 0 or to the end would render the code before or after all text again
 			const bounds = [...new Set([0, ...Array.from({ length: random(4) }, () => random(length + 1)), length])]
 				.sort((a, b) => a - b);
-			const whole = buildNestedCase(createRewrite(s, alphabet(length)), testCase);
-			const split = buildNestedCase(createRewrite(s, alphabet(length)), testCase);
+			const whole = buildNestedCase(createRewrite(s, alphabet(length)), testCase, random);
+			const split = buildNestedCase(createRewrite(s, alphabet(length)), testCase, random);
 			const views = bounds.slice(1).map((end, index) => render(view(split, 'root', bounds[index], end)));
 			expect(views.join('')).toBe(render(view(whole, 'root')));
 		}
@@ -794,15 +790,22 @@ function createNestedCase(random: (below: number) => number, length: number) {
 }
 
 /** `rewrite` with the cuts and edits of the case. */
-function buildNestedCase(rewrite: SourceRewrite<TestSource, string>, { cuts, edits }: ReturnType<typeof createNestedCase>) {
-	const cutRange = createCutter(rewrite);
+function buildNestedCase(
+	rewrite: SourceRewrite<TestSource, string>,
+	{ cuts, edits }: ReturnType<typeof createNestedCase>,
+	random: (below: number) => number,
+) {
 	const slices: RewriteSlice<TestSource, string>[] = [];
-	// outer first: of two cuts of one range, the earlier
-	for (const cut of [...cuts].sort((a, b) => a.start - b.start || b.end - a.end || a.id - b.id)) {
+	// in a random order, but of two cuts of one range the earlier first, as it holds the later
+	const order = cuts.map(cut => ({ cut, key: random(cuts.length + 1) }))
+		.sort((a, b) => a.key - b.key)
+		.map(({ cut }) => cut);
+	const ofRange = (cut: NestedCut) => order.filter(other => other.start === cut.start && other.end === cut.end);
+	for (const cut of order.map(cut => ofRange(cut).sort((a, b) => a.id - b.id)[ofRange(cut).indexOf(cut)]!)) {
 		// a cut not placed elsewhere renders in its own placeholder, which code reads when it renders
 		const inPlace: RewriteCode<TestSource, string>[] = [];
 		const placeholder = cut.place ? `<P${cut.id}>` : inPlace;
-		slices[cut.id] = cutRange(cut.start, cut.end, { data: `cut${cut.id}`, placeholder });
+		slices[cut.id] = rewrite.cut(cut.start, cut.end, { data: `cut${cut.id}`, placeholder });
 		inPlace.push('<', slices[cut.id]!, '>');
 	}
 	for (const cut of cuts) {
