@@ -6,7 +6,7 @@ export type RewriteCode<Source, Data> =
 	| RewriteSlice<Source, Data>
 	| readonly RewriteCode<Source, Data>[];
 
-export interface CutOptions<Source, Data> {
+export interface RewriteCutOptions<Source, Data> {
 	/** The data of the kept pieces of the cut. */
 	data: Data;
 	/** The code that takes the place of the cut in the cut that contains it. */
@@ -32,7 +32,7 @@ export interface RewriteWriter<Source, Data> {
 	 * disjoint, and of two cuts of one range the later is inside the earlier. A zero-width cut owns no char and has no
 	 * placeholder; on an empty text, the first one renders the inserts.
 	 */
-	cut(start: number, end: number, options: CutOptions<Source, Data>): RewriteSlice<Source, Data>;
+	cut(start: number, end: number, options: RewriteCutOptions<Source, Data>): RewriteSlice<Source, Data>;
 }
 
 export interface RewriteSlice<Source, Data> {
