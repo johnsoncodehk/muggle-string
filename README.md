@@ -32,7 +32,11 @@ const { slice: declaration } = rewrite.root.cut(source.content.indexOf('const'),
 	data: 'declaration',
 });
 rewrite.insertBefore(0, declaration);
+```
 
+A view of the whole text renders the generated text:
+
+```ts
 let output = '';
 rewrite.render(0, source.content.length, 'file', piece => output += rewritePieceText(piece));
 // const user = "Ada";
@@ -55,16 +59,18 @@ Code is a piece of a rewrite, a slice, which renders its cut in place, or an arr
 
 ## Rendering
 
-`rewrite.render(start, end, data, sink)` and `slice.render(sink)` pass the pieces of the view or the slice to `sink`, a function of one piece, in order: no string is empty, a piece of code passes through as it is, and kept text is a range without `text`. A consumer that wants an array of pieces pushes them:
+`rewrite.render(start, end, data, sink)` and `slice.render(sink)` pass the pieces of the view or the slice to `sink`, a function of one piece, in order: no string is empty, a piece of code passes through as it is, and kept text is a range without `text`. A consumer that wants an array of pieces pushes them, in place of the render of the usage above:
 
 ```ts
-const pieces: Piece<{ source: string; data: string }>[] = [];
-slice.render(piece => pieces.push(piece));
+import type { Piece } from 'muggle-string';
+
+const pieces: Piece<{ source: typeof source; data: string }>[] = [];
+rewrite.render(0, source.content.length, 'file', piece => pieces.push(piece));
 ```
 
 ## Source maps
 
-muggle-string builds no source map, but a sink can. In place of the sink of the usage above, this one tracks the line and column of the generated text and adds v3 segments with [`@jridgewell/gen-mapping`](https://github.com/jridgewell/sourcemaps/tree/main/packages/gen-mapping): new text maps nowhere, the `text` of a range maps as a whole to its start, and kept text maps at the start of each word and each other non-space char: every token maps, not every column. The first range of each source adds its content to the map and computes its line starts, which a binary search reads.
+muggle-string builds no source map, but a sink can. In place of the render of the usage above, this sink tracks the line and column of the generated text and adds v3 segments with [`@jridgewell/gen-mapping`](https://github.com/jridgewell/sourcemaps/tree/main/packages/gen-mapping): new text maps nowhere, the `text` of a range maps as a whole to its start, and kept text maps at the start of each word and each other non-space char: every token maps, not every column. The first range of each source adds its content to the map and computes its line starts, which a binary search reads.
 
 ```ts
 import { addMapping, GenMapping, setSourceContent, toEncodedMap } from '@jridgewell/gen-mapping';

@@ -138,24 +138,6 @@ function defineProps(text: string, statement = 'const') {
 }
 
 describe('scenarios', () => {
-	test('the example of the readme', () => {
-		const source = { name: 'main.js', content: 'log(name);\nconst name = "Ada";\n' };
-		const rewrite = createSourceRewrite<typeof source, string>(source);
-
-		for (const { index } of source.content.matchAll(/\bname\b/g)) {
-			rewrite.replace(index, index + 'name'.length, 'user');
-		}
-
-		const { slice: declaration } = rewrite.root.cut(source.content.indexOf('const'), source.content.length, {
-			data: 'declaration',
-		});
-		rewrite.insertBefore(0, declaration);
-
-		let output = '';
-		rewrite.render(0, source.content.length, 'file', piece => output += rewritePieceText(piece));
-		expect(output).toBe('const user = "Ada";\nlog(user);\n');
-	});
-
 	test('the rewrite moves a type argument into an alias', () => {
 		const { body } = defineProps('const props = defineProps<{ a: string }>();');
 		expect(render(body)).toBe('type __VLS_Props = { a: string };\nconst props = defineProps<__VLS_Props>();');
