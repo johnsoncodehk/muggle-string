@@ -30,14 +30,8 @@ type NamedPiece = Piece<{ source: TestSource | string; data: string }>;
 /** A source of pieces of generated code, which no rewrite edits. */
 const otherSource: TestSource = { name: other, content: 'wxyz' };
 
-/** The source of each rewrite, which its kept pieces carry. */
-const sources = new Map<SourceRewrite<TestSource, string>, TestSource>();
-
 function createRewrite(name: string, content: string) {
-	const source = { name, content };
-	const rewrite = createSourceRewrite<TestSource, string>(source);
-	sources.set(rewrite, source);
-	return rewrite;
+	return createSourceRewrite<TestSource, string>({ name, content });
 }
 
 /** The pieces of `slice`, as the render passes them. */
@@ -67,7 +61,7 @@ function view(
 	rewrite: SourceRewrite<TestSource, string>,
 	data = 'body',
 	start = 0,
-	end = sources.get(rewrite)!.content.length,
+	end = rewrite.source.content.length,
 ): RewriteSlice<TestSource, string> {
 	return { render: sink => rewrite.render(start, end, data, sink) };
 }
@@ -111,7 +105,7 @@ function renderedOffsets(rewrite: SourceRewrite<TestSource, string>, pieces: Tes
 			return [];
 		}
 		expect(piece).not.toHaveProperty('text');
-		expect(piece.source).toBe(sources.get(rewrite));
+		expect(piece.source).toBe(rewrite.source);
 		expect(piece.end).toBeGreaterThan(piece.start);
 		return Array.from({ length: piece.end - piece.start }, (_, index) => piece.start + index);
 	});

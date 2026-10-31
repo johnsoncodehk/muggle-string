@@ -66,6 +66,8 @@ export interface RewriteSlice<Source extends RewriteSource, Data> {
  * The first render freezes the edits.
  */
 export interface SourceRewrite<Source extends RewriteSource, Data> extends RewriteWriter<Source, Data> {
+	/** The source that the rewrite edits, which its kept pieces carry. */
+	readonly source: Source;
 	/** The whole text, the part that the first cut splits. */
 	readonly root: RewritePart<Source, Data>;
 	/**
@@ -92,6 +94,7 @@ export function createSourceRewrite<Source extends RewriteSource, Data>(source: 
 	const rewrite = new Rewrite<Source, Data>(source);
 	return {
 		...rewrite.core,
+		source,
 		root: new Part(rewrite, undefined, 0, source.content.length),
 		writer: rank => rewrite.writer(rank),
 		render: (start, end, data, sink) => rewrite.render(start, end, data, sink),

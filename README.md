@@ -43,7 +43,7 @@ rewrite.render(0, source.content.length, 'file', piece => output += rewritePiece
 // log(user);
 ```
 
-A source is any object with the `content` that it rewrites, and the ranges of its pieces carry it as their `source`, so a consumer reads their text there. The content must not change until the rewrite is rendered.
+A source is any object with the `content` that it rewrites, which `rewrite.source` gives, and the ranges of its pieces carry it as their `source`, so a consumer reads their text there. The content must not change until the rewrite is rendered.
 
 ## Pieces
 
