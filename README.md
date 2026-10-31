@@ -8,7 +8,7 @@ muggle-string comes from Vue language-tools. There, each Vue single-file compone
 
 - **Edits stay correct.** The plugins do not know about each other. Removals add up, so no edit undoes another. Code at one position is ordered by the rank of its writer, so the order of the plugins decides it, not the order of the calls. The tests in `tests/` check both with random edits.
 - **Maps are exact where tools read them.** The same pieces give the spans of a language server and a v3 source map for debuggers. In the source map, generated code maps to nothing, so a debugger never shows it as your code, even when it looks back across lines as V8 does. Kept code maps exactly at token starts in JavaScript, TypeScript, HTML and CSS, which is where breakpoints, stack traces and coverage read. The tests check every generated char of the map.
-- **It is fast.** A language server generates the code again after each change to a file. Each edit costs about 200 ns, however many came before. With Node 24 on an Apple M2, a 1 MB text with 100,000 edits takes 19 ms to edit, 32 ms to render, and 96 ms to render with a source map. In the script compiler of Vue single-file components, on 400 real components, muggle-string takes about 8 µs per component.
+- **Performance first.** A language server generates the code again after each change to a file, so the model skips work it does not need. An insert or a replace is only appended to the list of its writer. No text is searched, split or copied when you edit. The first render sorts the edits once, or not at all when they arrived in order, and then freezes the rewrite, so later edits throw. A render passes kept text as ranges of the source and never copies it. Whether to build a string from the pieces is up to you. With Node 24 on an Apple M2, each edit costs about 200 ns however many came before, and a 1 MB text with 100,000 edits renders in 32 ms.
 
 ## Usage
 
@@ -46,7 +46,6 @@ A source is any object with `content`. Do not change the content until the rewri
 - `rewrite.cut(start, end, options)` takes a range out and returns a slice. The slice renders the range, with every edit inside it, where you place it, as `insertBefore(0, declaration)` does in the usage. `options.placeholder` renders where the range was.
 - Cuts can be made in any order. A cut inside another moves with it. A cut that crosses another throws, naming both ranges.
 - A slice renders exactly once. Rendering it again throws. A slice placed inside its own range throws at the first render. `rewrite.unrendered()` lists the slices that have not rendered yet.
-- The first render freezes the rewrite. Later edits throw.
 
 ## Rendering
 
