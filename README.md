@@ -42,7 +42,7 @@ file.render(piece => output += typeof piece === 'string' ? piece : piece.text ??
 type Piece<Origin = unknown> = string | (Origin & { start: number; end: number; text?: string });
 ```
 
-A string is new text, which maps nowhere. An object is the range `start`..`end` of a source text: without `text` it copies the text there, and with `text` it is code that stands for the range, mapped as the consumer of the pieces decides.
+A string is new text, which maps nowhere. An object is the range `start`..`end` of a source text: without `text` it copies the text there, and with `text` it is generated text that stands for the range, mapped as the consumer of the pieces decides.
 
 `Origin` is what a range carries beyond its offsets. A producer of one source and no data, such as [muggle-pug](https://github.com/johnsoncodehk/muggle-pug), emits `Piece`, whose ranges are only offsets: its consumer knows the source. The code of a rewrite can mix sources, so its pieces are `Piece<{ source: Source; data: Data }>`, and its kept text renders as ranges without `text`, with the data of the cut that owns them.
 

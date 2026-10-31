@@ -1,6 +1,6 @@
 import type { Piece } from './types';
 
-/** Generated code: text, pieces, and slices, which render their cut in place. */
+/** Code written into a rewrite: pieces, slices, which render their cut in place, and arrays of code. */
 export type RewriteCode<Source, Data> =
 	| Piece<{ source: Source; data: Data }>
 	| RewriteSlice<Source, Data>
