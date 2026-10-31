@@ -536,14 +536,12 @@ describe('construction errors', () => {
 		const source = { content: 'abc' };
 		const rewrite = createSourceRewrite<typeof source, string | undefined>(source);
 		const pieces: Piece<{ source: typeof source; data: string | undefined }>[] = [];
-		const whole = rewrite.cut(0, 3);
+		const whole = rewrite.cut(0, 3, {});
 		rewrite.writer(0).cut(1, 2, { placeholder: 'P' });
 		whole.render(piece => pieces.push(piece));
 		expect(pieces).toEqual([{ source, start: 0, end: 1, data: undefined }, 'P', { source, start: 2, end: 3, data: undefined }]);
 		// @ts-expect-error
 		createSourceRewrite<typeof source, string>(source).cut(0, 3, {});
-		// @ts-expect-error
-		createSourceRewrite<typeof source, string>(source).cut(0, 3);
 	});
 
 	test('an edit after the first render is an error', () => {

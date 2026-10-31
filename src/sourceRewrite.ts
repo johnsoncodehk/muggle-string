@@ -42,7 +42,7 @@ export interface RewriteWriter<Source extends RewriteSource, Data> {
 		this: { cut(start: number, end: number, options: RewriteCutOptions<Source, undefined>): unknown },
 		start: number,
 		end: number,
-		options?: Omit<RewriteCutOptions<Source, Data>, 'data'>,
+		options: Omit<RewriteCutOptions<Source, Data>, 'data'>,
 	): RewriteSlice<Source, Data>;
 }
 
@@ -213,11 +213,11 @@ class Rewrite<Source extends RewriteSource, Data> {
 				edits.add(start, Side.Slot, code);
 				this.addRemoval(start, end);
 			},
-			cut: (start: number, end: number, options?: Partial<RewriteCutOptions<Source, Data>>) => {
+			cut: (start: number, end: number, options: Partial<RewriteCutOptions<Source, Data>>) => {
 				this.check(start, end);
-				const placeholder = options?.placeholder;
+				const { placeholder } = options;
 				// `data` is left out only by a writer whose data can be `undefined`
-				const cut = new Cut(this, start, end, options?.data as Data, placeholder);
+				const cut = new Cut(this, start, end, options.data as Data, placeholder);
 				if (start === end) {
 					if (placeholder !== undefined) {
 						throw new RangeError(`The empty cut at ${start} cannot have a placeholder.`);
