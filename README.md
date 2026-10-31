@@ -1,14 +1,14 @@
 Rewrite a source text from several places at once, and map the result back to the source.
 
-muggle-string is for compilers where several features edit and move the same text, and where the output must map back precisely for debuggers and language tools. It has no dependencies.
+muggle-string comes from Vue language-tools. There, each Vue single-file component becomes TypeScript code for the language server. Plugins for props, emits, models, slots and refs all edit the same `<script setup>` block. The generator moves parts of it, such as the expression of the default export, and renders the block in several pieces around the template code. Every piece of the output keeps the editor features of the code it came from, such as hover, completion and rename. muggle-string is the model behind that, without Vue in it. It has no dependencies.
 
 > 1.0 replaces the segment-array helpers of 0.4 (`replace`, `replaceSourceRange`, `toString`, ...). They are gone, not deprecated.
 
 ## Why
 
-- **Edits stay correct.** Features can edit the same text without knowing about each other. Removals add up, so no edit undoes another. Code at one position is ordered by the rank of its writer, not by which feature ran first. The tests in `tests/` check both with random edits.
-- **Debuggers see your code.** Generated code maps to nothing, so a debugger never shows it as yours, even when it looks back across lines as V8 does. Kept code maps exactly at token starts in JavaScript, TypeScript, HTML and CSS, which is where breakpoints, stack traces and coverage read. The tests check every generated char of the map.
-- **It is fast.** Each edit costs about 200 ns, however many came before. With Node 24 on an Apple M2, a 1 MB text with 100,000 edits takes 19 ms to edit, 32 ms to render, and 96 ms to render with a source map. In the script compiler of Vue single-file components, on 400 real components, muggle-string takes about 8 µs per component.
+- **Edits stay correct.** The plugins do not know about each other. Removals add up, so no edit undoes another. Code at one position is ordered by the rank of its writer, so the order of the plugins decides it, not the order of the calls. The tests in `tests/` check both with random edits.
+- **Maps are exact where tools read them.** The same pieces give the spans of a language server and a v3 source map for debuggers. In the source map, generated code maps to nothing, so a debugger never shows it as your code, even when it looks back across lines as V8 does. Kept code maps exactly at token starts in JavaScript, TypeScript, HTML and CSS, which is where breakpoints, stack traces and coverage read. The tests check every generated char of the map.
+- **It is fast.** A language server generates the code again after each change to a file. Each edit costs about 200 ns, however many came before. With Node 24 on an Apple M2, a 1 MB text with 100,000 edits takes 19 ms to edit, 32 ms to render, and 96 ms to render with a source map. In the script compiler of Vue single-file components, on 400 real components, muggle-string takes about 8 µs per component.
 
 ## Usage
 
@@ -91,7 +91,7 @@ const { text: output, map: sourceMap } = renderWithSourceMap(
 
 ## Span mappings
 
-Language tools, such as Vue language-tools, map generated code by spans. A Verbatim span maps each offset to the same offset in the original range. An Atom span maps its ends to the ends of the original range, and every offset inside it to the original start. A kept range is a Verbatim span, and a range with `text` is an Atom span:
+Language tools map generated code by spans. A Verbatim span maps each offset to the same offset in the original range. An Atom span maps its ends to the ends of the original range, and every offset inside it to the original start. A kept range is a Verbatim span, and a range with `text` is an Atom span:
 
 ```ts
 type Span = { virtualStart: number; virtualEnd: number; originalStart: number; originalEnd: number; kind: 'Verbatim' | 'Atom' };
