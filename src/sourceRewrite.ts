@@ -1,17 +1,24 @@
 import type { Piece, RewriteSource } from './types';
 
+/**
+ * The data of the kept pieces of a rewrite, where it has some: a rewrite whose data admits `undefined` has none to
+ * give, so it leaves the field out.
+ */
+export type RewriteData<Data> = undefined extends Data ? { data?: Data } : { data: Data };
+
+/** What a range of a rewrite carries beyond its offsets: its source, and the data of the rewrite. */
+export type RewriteOrigin<Source extends RewriteSource, Data> = { source: Source } & RewriteData<Data>;
+
 /** Code written into a rewrite: pieces, slices, which render their cut in place, and arrays of code. */
 export type RewriteCode<Source extends RewriteSource, Data> =
-	| Piece<{ source: Source; data: Data }>
+	| Piece<RewriteOrigin<Source, Data>>
 	| RewriteSlice<Source, Data>
 	| readonly RewriteCode<Source, Data>[];
 
-export interface RewriteCutOptions<Source extends RewriteSource, Data> {
-	/** The data of the kept pieces of the cut. */
-	data: Data;
+export type RewriteCutOptions<Source extends RewriteSource, Data> = RewriteData<Data> & {
 	/** The code that takes the place of the cut in the cut that contains it. */
 	placeholder?: RewriteCode<Source, Data>;
-}
+};
 
 export interface RewriteWriter<Source extends RewriteSource, Data> {
 	/**
@@ -45,7 +52,12 @@ export interface RewritePart<Source extends RewriteSource, Data> {
 	 * A rewrite has no last render, as any slice can render by itself at any time: a slice placed in code that is never
 	 * rendered is not rendered, without an error.
 	 */
-	cut(start: number, end: number, options: RewriteCutOptions<Source, Data>): RewriteCut<Source, Data>;
+	cut(
+		start: number,
+		end: number,
+		...options: undefined extends Data ? [options?: RewriteCutOptions<Source, Data>]
+			: [options: RewriteCutOptions<Source, Data>]
+	): RewriteCut<Source, Data>;
 }
 
 /** The parts that a cut splits a part into. */
@@ -57,7 +69,7 @@ export interface RewriteCut<Source extends RewriteSource, Data> {
 
 export interface RewriteSlice<Source extends RewriteSource, Data> {
 	/** Passes the pieces of the slice to `sink`, in order: no string is empty, and kept text is a range without `text`. */
-	render(sink: (piece: Piece<{ source: Source; data: Data }>) => void): void;
+	render(sink: (piece: Piece<RewriteOrigin<Source, Data>>) => void): void;
 }
 
 /**
@@ -81,7 +93,12 @@ export interface SourceRewrite<Source extends RewriteSource, Data> extends Rewri
 	 * placed, and its placeholder in the view of its start. The code before all text renders in a view from 0, and the
 	 * code after all text in a view to the end of the text.
 	 */
-	render(start: number, end: number, data: Data, sink: (piece: Piece<{ source: Source; data: Data }>) => void): void;
+	render(
+		start: number,
+		end: number,
+		sink: (piece: Piece<RewriteOrigin<Source, Data>>) => void,
+		...data: undefined extends Data ? [data?: Data] : [data: Data]
+	): void;
 	/**
 	 * The slices that have not rendered, in cut order: after the last render of its consumer, those that it placed
 	 * nowhere, or in code that it did not render.
@@ -97,10 +114,13 @@ export function createSourceRewrite<Source extends RewriteSource, Data>(source: 
 		source,
 		root: new Part(rewrite, undefined, 0, source.content.length),
 		writer: rank => rewrite.writer(rank),
-		render: (start, end, data, sink) => rewrite.render(start, end, data, sink),
+		render: (start: number, end: number, sink: Sink<Source, Data>, data?: Data) =>
+			rewrite.render(start, end, data as Data, sink),
 		unrendered: () => rewrite.cuts.filter(cut => cut.state === CutState.Unrendered),
 	};
 }
+
+type Sink<Source extends RewriteSource, Data> = (piece: Piece<RewriteOrigin<Source, Data>>) => void;
 
 /** The generated text of `piece`: new text, the `text` of a range, or the content of its source that it keeps. */
 export function rewritePieceText(piece: Piece<{ source: RewriteSource }>): string {
@@ -255,7 +275,12 @@ class Rewrite<Source extends RewriteSource, Data> {
 	}
 
 	/** Splits `part` at `start`..`end`. */
-	cut(part: Part<Source, Data>, start: number, end: number, options: RewriteCutOptions<Source, Data>): RewriteCut<Source, Data> {
+	cut(
+		part: Part<Source, Data>,
+		start: number,
+		end: number,
+		options: { data?: Data; placeholder?: RewriteCode<Source, Data> },
+	): RewriteCut<Source, Data> {
 		if (this.frozen) {
 			throw new Error('The rewrite is already rendered.');
 		}
@@ -268,14 +293,14 @@ class Rewrite<Source extends RewriteSource, Data> {
 		}
 		part.used = true;
 		const { holder } = part;
-		const cut = new Cut(this, holder, start, end, options.data, options.placeholder);
+		const cut = new Cut<Source, Data>(this, holder, start, end, options.data as Data, options.placeholder);
 		(holder ? holder.children ??= [] : this.roots).push(cut);
 		this.cuts.push(cut);
 		return { before: new Part(this, holder, part.start, start), slice: cut, after: new Part(this, holder, end, part.end) };
 	}
 
 	/** The view `start`..`end`. */
-	render(start: number, end: number, data: Data, sink: (piece: Piece<{ source: Source; data: Data }>) => void) {
+	render(start: number, end: number, data: Data, sink: (piece: Piece<RewriteOrigin<Source, Data>>) => void) {
 		const { length } = this.source.content;
 		checkRange(start, end, 0, length, `The range ${start}..${end} is out of 0..${length}.`);
 		this.freeze();
@@ -347,7 +372,7 @@ class Rewrite<Source extends RewriteSource, Data> {
 			if (typeof code === 'string') {
 				return;
 			}
-			if (isCodeArray(code)) {
+			if (isCodeArray<Source, Data>(code)) {
 				for (let index = 0; index < code.length; index++) {
 					collect(code[index]!);
 				}
@@ -506,7 +531,7 @@ function checkRange(start: number, end: number, min: number, max: number, messag
 	}
 }
 
-function sortByStart(cuts: Cut<RewriteSource, unknown>[]) {
+function sortByStart<Source extends RewriteSource, Data>(cuts: Cut<Source, Data>[]) {
 	cuts.sort((a, b) => a.start - b.start);
 }
 
@@ -522,8 +547,8 @@ class Part<Source extends RewriteSource, Data> implements RewritePart<Source, Da
 		readonly end: number,
 	) {}
 
-	cut(start: number, end: number, options: RewriteCutOptions<Source, Data>) {
-		return this.rewrite.cut(this, start, end, options);
+	cut(start: number, end: number, options?: RewriteCutOptions<Source, Data>) {
+		return this.rewrite.cut(this, start, end, (options ?? {}) as { data?: Data; placeholder?: RewriteCode<Source, Data> });
 	}
 }
 
@@ -548,7 +573,7 @@ class Cut<Source extends RewriteSource, Data> extends Part<Source, Data> impleme
 		this.holder = this;
 	}
 
-	render(sink: (piece: Piece<{ source: Source; data: Data }>) => void) {
+	render(sink: (piece: Piece<RewriteOrigin<Source, Data>>) => void) {
 		this.rewrite.freeze();
 		const byItself = !renderDepth;
 		if (this.state === CutState.Rendering) {
@@ -581,7 +606,7 @@ class Walker<Source extends RewriteSource, Data> {
 	/** The first removal that ends after `pos`. */
 	removal = 0;
 
-	constructor(rewrite: Rewrite<Source, Data>, readonly sink: (piece: Piece<{ source: Source; data: Data }>) => void) {
+	constructor(rewrite: Rewrite<Source, Data>, readonly sink: (piece: Piece<RewriteOrigin<Source, Data>>) => void) {
 		this.source = rewrite.source;
 		this.removals = rewrite.removals;
 		this.removalsSize = rewrite.removalsSize;
@@ -744,22 +769,22 @@ function renderEdits<Source extends RewriteSource, Data>(
 	}
 }
 
-function renderCode<Source extends RewriteSource, Data>(code: RewriteCode<Source, Data>, sink: (piece: Piece<{ source: Source; data: Data }>) => void) {
+function renderCode<Source extends RewriteSource, Data>(code: RewriteCode<Source, Data>, sink: (piece: Piece<RewriteOrigin<Source, Data>>) => void) {
 	if (typeof code === 'string') {
 		if (code) {
 			sink(code);
 		}
 	}
-	else if (isCodeArray(code)) {
+	else if (isCodeArray<Source, Data>(code)) {
 		for (let index = 0; index < code.length; index++) {
 			renderCode(code[index]!, sink);
 		}
 	}
-	else if (isSlice(code)) {
+	else if (isSlice<Source, Data>(code)) {
 		code.render(sink);
 	}
 	else {
-		sink(code as Piece<{ source: Source; data: Data }>);
+		sink(code as Piece<RewriteOrigin<Source, Data>>);
 	}
 }
 

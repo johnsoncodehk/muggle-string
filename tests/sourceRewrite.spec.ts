@@ -6,6 +6,7 @@ import {
 	type Piece,
 	type RewriteCode,
 	type RewriteCutOptions,
+	type RewriteOrigin,
 	type RewritePart,
 	type RewriteSlice,
 	type RewriteWriter,
@@ -63,7 +64,7 @@ function view(
 	start = 0,
 	end = rewrite.source.content.length,
 ): RewriteSlice<TestSource, string> {
-	return { render: sink => rewrite.render(start, end, data, sink) };
+	return { render: sink => rewrite.render(start, end, sink, data) };
 }
 
 /** Cuts a range from the part of `rewrite` that holds it, of the parts that the cuts before left; outer cuts first. */
@@ -467,6 +468,17 @@ describe('construction errors', () => {
 		after.cut(4, 5, { data: 'b' });
 	});
 
+	test('a rewrite without data leaves it out of its cuts, views and pieces', () => {
+		const source = { content: 'abc' };
+		const rewrite = createSourceRewrite<typeof source, undefined>(source);
+		const { slice: moved } = rewrite.root.cut(1, 2);
+		rewrite.replace(0, 1, { source, start: 0, end: 1, text: 'A' });
+		rewrite.insertBefore(3, moved);
+		const pieces: Piece<RewriteOrigin<typeof source, undefined>>[] = [];
+		rewrite.render(0, 3, piece => pieces.push(piece));
+		expect(pieces.map(rewritePieceText).join('')).toBe('Acb');
+	});
+
 	test('a cut placed in code that only its own render renders is an error at the first render', () => {
 		const inOwnRange = createRewrite(s, 'abcdef');
 		const body = view(inOwnRange);
@@ -547,7 +559,7 @@ describe('construction errors', () => {
 		expect(() => rewrite.writer(0).replace(2, 1, 'x')).toThrow('The range 2..1 is out of 0..3.');
 		expect(() => rewrite.writer(0).replace(1, 1, 'x')).toThrow('The replace at 1 removes no char.');
 		expect(() => rewrite.writer(-1)).toThrow('is not a non-negative integer');
-		expect(() => rewrite.render(2, 4, 'v', () => {})).toThrow('The range 2..4 is out of 0..3.');
+		expect(() => rewrite.render(2, 4, () => {}, 'v')).toThrow('The range 2..4 is out of 0..3.');
 	});
 });
 
