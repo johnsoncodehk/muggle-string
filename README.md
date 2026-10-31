@@ -1,6 +1,6 @@
 Ranked, conflict-free rewrites of a source text, rendered as format-neutral pieces.
 
-muggle-string has no dependencies and knows no mapping format: a rewrite renders to pieces, new text and ranges of the source, and the consumer turns them into whatever its tooling maps with.
+muggle-string has no dependencies. A rewrite renders to pieces, new text and ranges of the source, which a consumer turns into whatever its tooling maps with, or `renderWithSourceMap` turns into a v3 source map.
 
 > 1.0 replaces the segment-array helpers of 0.4 (`replace`, `replaceSourceRange`, `toString`, ...). They are gone, not deprecated.
 
