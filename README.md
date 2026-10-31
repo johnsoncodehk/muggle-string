@@ -4,6 +4,12 @@ muggle-string is for compilers where several features edit and move the same tex
 
 > 1.0 replaces the segment-array helpers of 0.4 (`replace`, `replaceSourceRange`, `toString`, ...). They are gone, not deprecated.
 
+## Why
+
+- **Edits stay correct.** Features can edit the same text without knowing about each other. Removals add up, so no edit undoes another. Code at one position is ordered by the rank of its writer, not by which feature ran first. The tests in `tests/` check both with random edits.
+- **Debuggers see your code.** Generated code maps to nothing, so a debugger never shows it as yours, even when it looks back across lines as V8 does. Kept code maps exactly at token starts in JavaScript, TypeScript, HTML and CSS, which is where breakpoints, stack traces and coverage read. The tests check every generated char of the map.
+- **It is fast.** Each edit costs about 200 ns, however many came before. With Node 24 on an Apple M2, a 1 MB text with 100,000 edits takes 19 ms to edit, 32 ms to render, and 96 ms to render with a source map. In the script compiler of Vue single-file components, on 400 real components, muggle-string takes about 8 µs per component.
+
 ## Usage
 
 ```ts
@@ -36,14 +42,11 @@ A source is any object with `content`. Do not change the content until the rewri
 
 - `insertBefore(offset, code)` attaches code to the char at `offset`, and `insertAfter(offset, code)` to the char before it. The code moves with that char.
 - `replace(start, end, code)` removes `start`..`end` and puts `code` in its place. An empty range throws.
-- Removals add up. Two writers can remove overlapping text, or replace the same range, and both edits apply.
-- `rewrite.writer(rank)` gives a writer with its own rank. At one position, code of a higher rank goes outside code of a lower rank, whatever order the writers ran in. The rewrite itself is the outermost writer. Code of one writer at one position keeps call order.
+- `rewrite.writer(rank)` gives a writer with its own rank. At one position, code of a higher rank goes outside code of a lower rank. The rewrite itself is the outermost writer. Code of one writer at one position keeps call order.
 - `rewrite.cut(start, end, options)` takes a range out and returns a slice. The slice renders the range, with every edit inside it, where you place it, as `insertBefore(0, declaration)` does in the usage. `options.placeholder` renders where the range was.
 - Cuts can be made in any order. A cut inside another moves with it. A cut that crosses another throws, naming both ranges.
 - A slice renders exactly once. Rendering it again throws. A slice placed inside its own range throws at the first render. `rewrite.unrendered()` lists the slices that have not rendered yet.
 - The first render freezes the rewrite. Later edits throw.
-
-The tests in `tests/` check these rules with random edits, and check every generated char of the source maps.
 
 ## Rendering
 
@@ -55,7 +58,7 @@ The tests in `tests/` check these rules with random edits, and check every gener
 type Piece<Origin = unknown> = string | (Origin & { start: number; end: number; text?: string });
 ```
 
-- A string is new text. It maps nowhere.
+- A string is new text.
 - A range without `text` keeps the source text at `start`..`end`.
 - A range with `text` is generated text that stands for `start`..`end`.
 
@@ -82,10 +85,8 @@ const { text: output, map: sourceMap } = renderWithSourceMap(
 // {"version":3,"sources":["main.js"],"sourcesContent":["log(name);\nconst name = \"Ada\";\n"],"names":["name"],"mappings":"AACA,KAAK,CAACA,IAAI,CAAC,CAAC,CAAC,CAAC,GAAG,CAAC;AADlB,GAAG,CAACA,IAAI,CAAC;"}
 ```
 
-- Kept text maps at the start of each line, word, run of whitespace, and every other char. A word is a run of Unicode letters, marks and digits. Chars like `_`, `$` and `-` map on their own, because languages disagree on whether they belong to a name.
-- So positions at token starts map exactly in JavaScript, TypeScript, HTML and CSS. Breakpoints, stack traces and coverage read those positions. A position inside a word maps to the start of the word.
+- Kept text maps at the start of each line, word, run of whitespace, and every other char. A word is a run of Unicode letters, marks and digits. Chars like `_`, `$` and `-` map on their own, because languages disagree on whether they belong to a name. A position inside a word maps to the start of the word.
 - The `text` of a range maps to the start of the range.
-- New text maps nowhere, also for tools that look back across lines, as V8 does.
 - The `name` of a range goes into `names`. Set it only when `text` renames the identifier at the range. A name on text that starts with another identifier, such as `__props.x` for `x`, makes a debugger show `__props` as `x`. muggle-string adds no names itself.
 
 ## Span mappings
@@ -114,11 +115,3 @@ rewrite.render(0, source.content.length, piece => {
 ```
 
 A `text` as long as its range, whose offsets line up, such as a rename to a name of the same length, can be a Verbatim span instead. Vue language-tools does this, so an edit inside the name maps back.
-
-## Performance
-
-Measured with Node 24 on an Apple M2:
-
-- A 1 MB text with 100,000 edits takes 19 ms to edit, 32 ms to render, and 96 ms to render with a source map.
-- Edit time is linear: about 200 ns per edit, from 1,000 to 100,000 edits.
-- In the script compiler of Vue single-file components, on 400 real components, muggle-string takes about 8 µs per component, most of it for the source map.
