@@ -1,6 +1,6 @@
 Rewrite a source text from several places at once, and map the result back to the source.
 
-muggle-string comes from Vue language-tools. There, each Vue single-file component becomes TypeScript code for the language server. Plugins for props, emits, models, slots and refs all edit the same `<script setup>` block. The generator moves parts of it, such as the expression of the default export, and renders the block in several pieces around the template code. Every piece of the output keeps the editor features of the code it came from, such as hover, completion and rename. muggle-string is the model behind that, without Vue in it. It has no dependencies.
+muggle-string comes from vuejs/language-tools. There, each Vue single-file component becomes TypeScript code for the language server. Plugins for props, emits, models, slots and refs all edit the same `<script setup>` block. The generator moves parts of it, such as the expression of the default export, and renders the block in several pieces around the template code. Every piece of the output keeps the editor features of the code it came from, such as hover, completion and rename. muggle-string is the model behind that, without Vue in it. It has no dependencies.
 
 > 1.0 replaces the segment-array helpers of 0.4 (`replace`, `replaceSourceRange`, `toString`, ...). They are gone, not deprecated.
 
@@ -113,4 +113,4 @@ rewrite.render(0, source.content.length, piece => {
 // {"virtualStart":28,"virtualEnd":31,"originalStart":8,"originalEnd":11,"kind":"Verbatim"}
 ```
 
-A `text` as long as its range, whose offsets line up, such as a rename to a name of the same length, can be a Verbatim span instead. Vue language-tools does this, so an edit inside the name maps back.
+A `text` as long as its range, whose offsets line up, such as a rename to a name of the same length, can be a Verbatim span instead. vuejs/language-tools does this, so an edit inside the name maps back.
