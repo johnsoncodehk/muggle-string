@@ -10,6 +10,7 @@ muggle-string has no dependencies and knows no mapping format: a rewrite renders
 - `insertBefore(offset, code)` and `insertAfter(offset, code)` attach code to a side of a char, so it goes wherever that char goes. `replace(start, end, code)` removes the text and puts `code` in the place of its first char.
 - Removals add up, so edits of different writers never conflict.
 - Text moves only by `cut(start, end, { data, placeholder })`, which every writer has. The cuts of all writers are nested or disjoint. A cut renders its text, with the edits of all writers in it, wherever its slice is placed, exactly once; the cut around it renders `placeholder` instead.
+- A slice renders where it is placed or by itself, so a consumer can render the cuts of one rewrite into separate outputs, in any order. Hence a rewrite has no last render: the text of a cut that is never rendered, or placed in code that is never rendered, is not rendered, and no error tells. A slice placed in code that only its own render renders, as in its own range, is an error at the first render, and a slice that renders a second time is an error then.
 - Code at the head or tail of a cut belongs to the outermost cut that has that edge.
 - The entries of one writer at one side of one char keep call order; code that must go outside them comes from a writer of a higher rank.
 - The first render freezes the rewrite.

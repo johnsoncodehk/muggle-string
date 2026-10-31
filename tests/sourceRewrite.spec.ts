@@ -404,14 +404,25 @@ describe('runs', () => {
 		expect(collect(rewrite.cut(0, 3, { data: 'body' }))).toEqual([{ source: s, start: 0, end: 3, data: 'body' }]);
 	});
 
-	test('code in a cut that is not placed does not render', () => {
+	test('a cut that is never placed does not render, with the code in it, as a later render could place it', () => {
 		const rewrite = createRewrite(s, 'abcdef');
 		const body = rewrite.cut(0, 6, { data: 'body' });
 		const unplaced = rewrite.cut(2, 4, { data: 'unplaced' });
 		rewrite.insertBefore(0, 'x');
-		rewrite.insertBefore(3, ['y', unplaced]);
+		rewrite.insertBefore(3, 'y');
 		rewrite.insertAfter(6, 'z');
 		expect(render(body)).toBe('xabefz');
+		expect(render(unplaced)).toBe('cyd');
+	});
+
+	test('a cut that is placed in code in a cut placed elsewhere renders there', () => {
+		const rewrite = createRewrite(s, 'abcdef');
+		const body = rewrite.cut(0, 6, { data: 'body' });
+		const outer = rewrite.cut(1, 5, { data: 'outer', placeholder: 'O' });
+		const inner = rewrite.cut(2, 3, { data: 'inner', placeholder: 'I' });
+		rewrite.insertAfter(3, ['[', outer, ']']);
+		rewrite.insertBefore(6, ['{', inner, '}']);
+		expect(render(body)).toBe('aOf{c[bIde]}');
 	});
 });
 
@@ -458,6 +469,41 @@ describe('construction errors', () => {
 	test('a zero-width cut with a placeholder is an error', () => {
 		const rewrite = createRewrite(s, 'abc');
 		expect(() => rewrite.cut(1, 1, { data: 'a', placeholder: 'P' })).toThrow('cannot have a placeholder');
+	});
+
+	test('a cut placed in code that only its own render renders is an error at the first render', () => {
+		const inOwnRange = createRewrite(s, 'abcdef');
+		const body = inOwnRange.cut(0, 6, { data: 'body' });
+		const cut = inOwnRange.cut(1, 4, { data: 'cut' });
+		inOwnRange.insertBefore(2, cut);
+		const message = 'The cut 1..4 is placed inside itself, so it never renders.';
+		expect(() => collect(body)).toThrow(message);
+		expect(() => collect(cut)).toThrow(message);
+
+		const inOwnPlaceholder = createRewrite(s, 'abcdef');
+		const outer = inOwnPlaceholder.cut(1, 5, { data: 'outer' });
+		const placeholder: RewriteCode<TestSource, string>[] = [];
+		inOwnPlaceholder.cut(2, 3, { data: 'inner', placeholder });
+		placeholder.push(outer);
+		expect(() => collect(outer)).toThrow('The cut 1..5 is placed inside itself');
+
+		const inEachOther = createRewrite(s, 'abcdef');
+		const whole = inEachOther.cut(0, 6, { data: 'whole' });
+		const first = inEachOther.cut(1, 2, { data: 'first' });
+		const second = inEachOther.cut(3, 4, { data: 'second' });
+		inEachOther.insertBefore(1, second);
+		inEachOther.insertBefore(3, first);
+		expect(() => collect(whole)).toThrow('is placed inside itself');
+	});
+
+	test('a cut that its own render places is an error, also across rewrites', () => {
+		const a = createRewrite(s, 'abc');
+		const b = createRewrite(other, 'xyz');
+		const aCut = a.cut(0, 3, { data: 'a' });
+		const bCut = b.cut(0, 3, { data: 'b' });
+		a.insertBefore(1, bCut);
+		b.insertBefore(1, aCut);
+		expect(() => collect(aCut)).toThrow('The cut 0..3 is placed inside itself, so it never renders.');
 	});
 
 	test('placing a cut twice is an error', () => {

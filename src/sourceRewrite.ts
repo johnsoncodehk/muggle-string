@@ -31,6 +31,10 @@ export interface RewriteWriter<Source extends RewriteSource, Data> {
 	 * exactly once. In the cut that contains it, `placeholder` takes its place. The cuts of all writers are nested or
 	 * disjoint, which the first render checks, and of two cuts of one range the later is inside the earlier. A
 	 * zero-width cut owns no char and has no placeholder; on an empty text, the first one renders the inserts.
+	 *
+	 * A slice that is placed in code that only its own render renders, as in its own range, throws at the first render.
+	 * A rewrite has no last render, as any slice can render by itself at any time: the text of a cut that is never
+	 * rendered, or placed in code that is never rendered, is not rendered, without an error.
 	 */
 	cut(start: number, end: number, options: RewriteCutOptions<Source, Data>): RewriteSlice<Source, Data>;
 }
@@ -267,6 +271,7 @@ class Rewrite<Source extends RewriteSource, Data> {
 		this.mergeRemovals();
 		try {
 			this.buildCuts();
+			this.checkPlacements();
 		}
 		catch (error) {
 			this.error = error;
@@ -299,10 +304,129 @@ class Rewrite<Source extends RewriteSource, Data> {
 				);
 			}
 			else {
+				cut.parent = parent;
 				(parent.children ??= []).push(cut);
 			}
 			open.push(cut);
 		}
+	}
+
+	/**
+	 * Throws for a cut that only its own render would render: placed in code that it renders, directly or through the
+	 * cuts placed in it. Code at a char renders in the innermost cut that owns the char, and a placeholder in the cut
+	 * around its own.
+	 */
+	private checkPlacements() {
+		if (!this.cuts.length && !this.firstEmpty) {
+			return;
+		}
+		/** The cuts that render the code that each cut is placed in. */
+		const renderers = new Map<Cut<Source, Data>, Cut<Source, Data>[]>();
+		const held: Cut<Source, Data>[] = [];
+		const collect = (code: RewriteCode<Source, Data>) => {
+			if (typeof code === 'string') {
+				return;
+			}
+			if (isCodeArray(code)) {
+				for (let index = 0; index < code.length; index++) {
+					collect(code[index]!);
+				}
+			}
+			else if (code instanceof Cut && code.rewrite === this) {
+				held.push(code);
+			}
+		};
+		const place = (renderer: Cut<Source, Data> | undefined) => {
+			if (renderer) {
+				for (const cut of held) {
+					const list = renderers.get(cut);
+					if (list) {
+						list.push(renderer);
+					}
+					else {
+						renderers.set(cut, [renderer]);
+					}
+				}
+			}
+			held.length = 0;
+		};
+		for (const { keys, code } of this.writerEdits) {
+			for (let index = 0; index < code.length; index++) {
+				collect(code[index]!);
+				if (held.length) {
+					place(this.ownerOf(keys[index]! >> 2));
+				}
+			}
+		}
+		for (const cut of this.cuts) {
+			if (cut.placeholder !== undefined) {
+				collect(cut.placeholder);
+				place(cut.parent);
+			}
+		}
+		/** 1 while the renderers of a cut are walked, 2 once none of them leads back to it. */
+		const visited = new Map<Cut<Source, Data>, 1 | 2>();
+		for (const first of renderers.keys()) {
+			if (visited.has(first)) {
+				continue;
+			}
+			visited.set(first, 1);
+			const path: [Cut<Source, Data>, number][] = [[first, 0]];
+			while (path.length) {
+				const top = path[path.length - 1]!;
+				const list = renderers.get(top[0]);
+				if (!list || top[1] === list.length) {
+					visited.set(top[0], 2);
+					path.pop();
+					continue;
+				}
+				const renderer = list[top[1]++]!;
+				const seen = visited.get(renderer);
+				if (seen === 1) {
+					throw new Error(`The cut ${renderer.start}..${renderer.end} is placed inside itself, so it never renders.`);
+				}
+				if (!seen) {
+					visited.set(renderer, 1);
+					path.push([renderer, 0]);
+				}
+			}
+		}
+	}
+
+	/** The cut that renders the code at the char `at`: -1 is before all text, and the length after all text. */
+	private ownerOf(at: number) {
+		const roots = this.roots;
+		if (!roots.length) {
+			return this.source.content.length ? undefined : this.firstEmpty;
+		}
+		if (at === -1) {
+			return roots[0]!.start === 0 ? roots[0] : undefined;
+		}
+		if (at === this.source.content.length) {
+			return roots[roots.length - 1]!.end === at ? roots[roots.length - 1] : undefined;
+		}
+		let owner: Cut<Source, Data> | undefined;
+		let siblings: Cut<Source, Data>[] | undefined = roots;
+		while (siblings) {
+			let low = 0;
+			let high = siblings.length;
+			while (low < high) {
+				const mid = (low + high) >>> 1;
+				if (siblings[mid]!.end <= at) {
+					low = mid + 1;
+				}
+				else {
+					high = mid;
+				}
+			}
+			const sibling: Cut<Source, Data> | undefined = siblings[low];
+			if (!sibling || sibling.start > at) {
+				break;
+			}
+			owner = sibling;
+			siblings = sibling.children;
+		}
+		return owner;
 	}
 
 	private mergeRemovals() {
@@ -340,10 +464,18 @@ class Rewrite<Source extends RewriteSource, Data> {
 	}
 }
 
+const enum CutState {
+	Unrendered,
+	Rendering,
+	Rendered,
+}
+
 class Cut<Source extends RewriteSource, Data> implements RewriteSlice<Source, Data> {
+	/** The cut that contains it directly, which renders its placeholder. */
+	parent: Cut<Source, Data> | undefined;
 	/** The cuts directly inside, sorted and disjoint. */
 	children: Cut<Source, Data>[] | undefined;
-	placed = false;
+	state = CutState.Unrendered;
 
 	constructor(
 		readonly rewrite: Rewrite<Source, Data>,
@@ -355,7 +487,19 @@ class Cut<Source extends RewriteSource, Data> implements RewriteSlice<Source, Da
 
 	render(sink: (piece: Piece<{ source: Source; data: Data }>) => void) {
 		this.rewrite.freeze();
-		renderCut(this, new Walker(this.rewrite, sink));
+		if (this.state === CutState.Rendering) {
+			throw new Error(`The cut ${this.start}..${this.end} is placed inside itself, so it never renders.`);
+		}
+		if (this.state === CutState.Rendered) {
+			throw new Error(`The cut ${this.start}..${this.end} is placed twice.`);
+		}
+		this.state = CutState.Rendering;
+		try {
+			renderCut(this, new Walker(this.rewrite, sink));
+		}
+		finally {
+			this.state = CutState.Rendered;
+		}
 	}
 }
 
@@ -414,10 +558,6 @@ class Walker<Source extends RewriteSource, Data> {
 }
 
 function renderCut<Source extends RewriteSource, Data>(cut: Cut<Source, Data>, walker: Walker<Source, Data>) {
-	if (cut.placed) {
-		throw new Error(`The cut ${cut.start}..${cut.end} is placed twice.`);
-	}
-	cut.placed = true;
 	const rewrite = cut.rewrite;
 	const { writerEdits: writers, roots } = rewrite;
 	const { start, end, children, data } = cut;
