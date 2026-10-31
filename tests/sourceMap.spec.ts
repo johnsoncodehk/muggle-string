@@ -15,7 +15,14 @@ function render(pieces: TestPiece[]) {
 }
 
 function classOf(char: string) {
-	return /\s/.test(char) ? 'space' : /[\w$]|[^\x00-\x7f]/.test(char) ? 'word' : 'other';
+	return /\s/.test(char) ? 'space' : /[\p{L}\p{M}\p{N}]/u.test(char) ? 'word' : 'other';
+}
+
+/** The class of the char that starts at `index` of `text`, or `undefined` in the second half of a surrogate pair. */
+function classAt(text: string, index: number) {
+	return /[\udc00-\udfff]/.test(text[index]!) && /[\ud800-\udbff]/.test(text[index - 1] ?? '')
+		? undefined
+		: classOf(String.fromCodePoint(text.codePointAt(index)!));
 }
 
 /**
@@ -37,8 +44,9 @@ function expected(pieces: TestPiece[]) {
 				line.push(null);
 			}
 			else if (piece.text === undefined) {
-				const boundary = i === 0 || text[i - 1] === '\n' || classOf(text[i]!) !== classOf(text[i - 1]!)
-					|| classOf(text[i]!) === 'other';
+				const kind = classAt(text, i);
+				const before = i === 0 || text[i - 1] === '\n' ? undefined : classAt(text, i - 1) ?? classAt(text, i - 2);
+				const boundary = kind !== undefined && (kind !== before || kind === 'other');
 				line.push(boundary ? { source: piece.source.name, offset: piece.start + i } : undefined as never);
 			}
 			else {
@@ -98,6 +106,18 @@ describe('renderWithSourceMap', () => {
 			names: [],
 			mappings: 'AAAA,KAAK,CAAC,CAAC,CAAC,CAAC,CAAC,CAAC;AACX,GAAG,CAAC,CAAC,CAAC;',
 		});
+	});
+
+	test('words are runs of Unicode letters, marks and digits, so the joiners of each syntax map on their own', () => {
+		const sfc: TestSource = {
+			name: 'App.vue',
+			content: '<div v-on:click="$emit_1">名前\u3000é</div>\n'
+				+ '<script>const 𝒜b = "😀😀";</script>\n<style>.a-b { --main-color: 10px }</style>\n',
+		};
+		const { map } = check([{ source: sfc, start: 0, end: sfc.content.length }]);
+		const node = new NodeSourceMap(map);
+		const at = (column: number) => (node.findEntry(0, column) as { originalColumn: number }).originalColumn;
+		expect([at(7), at(17), at(18), at(22), at(28)]).toEqual([7, 17, 18, 22, 28]);
 	});
 
 	test('new text maps nowhere, and ends the mapping of the text before it on its line', () => {

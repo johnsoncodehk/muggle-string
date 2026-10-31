@@ -20,7 +20,9 @@ const enum CharClass {
 /**
  * The generated text of the pieces that `render` passes to its sink, and a v3 source map of it to their sources, which
  * `name` names, with their content, in the order that the pieces first reach them. Kept text maps to itself at the
- * start of each piece, line, word, run of whitespace and other char, so a position at a token boundary maps exactly;
+ * start of each piece, line, word (a run of Unicode letters, marks and digits), run of whitespace and other char, as
+ * `_`, `$` and `-`, which syntaxes differ on joining into names, so a position at a token boundary maps exactly in any
+ * syntax whose tokens do not start inside such a word;
  * the `text` of a range maps as a whole to the start of the range, at the start of each of its lines but an empty last
  * one; new text maps nowhere, and where it starts a line or follows mapped text on one, a segment without a source
  * ends the mapping before it.
@@ -133,7 +135,15 @@ export function renderWithSourceMap<Source extends RewriteSource>(
 					previous = -1;
 					continue;
 				}
-				const kind = classOf(code);
+				if (code >= 0xdc00 && code <= 0xdfff && previous !== -1) {
+					const high = content.charCodeAt(offset - 1);
+					if (high >= 0xd800 && high <= 0xdbff) {
+						column++;
+						sourceColumn++;
+						continue;
+					}
+				}
+				const kind = classOf(content, offset, code);
 				if (kind !== previous || kind === CharClass.Other) {
 					mapTo(index, line, sourceColumn);
 				}
@@ -177,15 +187,21 @@ function encode(value: number) {
 	return code;
 }
 
-function classOf(code: number) {
-	if (code === 32 || code === 9 || code === 11 || code === 12 || code === 13 || code === 0xa0 || code === 0xfeff) {
+const space = /\s/y;
+const word = /[\p{L}\p{M}\p{N}]/uy;
+
+function classOf(content: string, offset: number, code: number) {
+	if (code < 128) {
+		return code === 32 || (code >= 9 && code <= 13)
+			? CharClass.Space
+			: (code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122)
+			? CharClass.Word
+			: CharClass.Other;
+	}
+	space.lastIndex = offset;
+	if (space.test(content)) {
 		return CharClass.Space;
 	}
-	if (
-		(code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122) || code === 95
-		|| code === 36 || code >= 128
-	) {
-		return CharClass.Word;
-	}
-	return CharClass.Other;
+	word.lastIndex = offset;
+	return word.test(content) ? CharClass.Word : CharClass.Other;
 }
