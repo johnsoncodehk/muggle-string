@@ -6,20 +6,12 @@ export type RewriteCode<Source extends RewriteSource, Data> =
 	| RewriteSlice<Source, Data>
 	| readonly RewriteCode<Source, Data>[];
 
-/** The options of a cut, whose `data` can be left out when `undefined` is a `Data`. */
-export type RewriteCutOptions<Source extends RewriteSource, Data> =
-	& {
-		/** The code that takes the place of the cut in the cut that contains it. */
-		placeholder?: RewriteCode<Source, Data>;
-	}
-	& (undefined extends Data ? {
-			/** The data of the kept pieces of the cut. */
-			data?: Data;
-		}
-		: {
-			/** The data of the kept pieces of the cut. */
-			data: Data;
-		});
+export interface RewriteCutOptions<Source extends RewriteSource, Data> {
+	/** The data of the kept pieces of the cut. */
+	data: Data;
+	/** The code that takes the place of the cut in the cut that contains it. */
+	placeholder?: RewriteCode<Source, Data>;
+}
 
 export interface RewriteWriter<Source extends RewriteSource, Data> {
 	/**
@@ -45,6 +37,13 @@ export interface RewriteWriter<Source extends RewriteSource, Data> {
 	 * rendered, or placed in code that is never rendered, is not rendered, without an error.
 	 */
 	cut(start: number, end: number, options: RewriteCutOptions<Source, Data>): RewriteSlice<Source, Data>;
+	/** A cut whose kept pieces have `undefined` as data, by a writer whose data can be `undefined`. */
+	cut(
+		this: { cut(start: number, end: number, options: RewriteCutOptions<Source, undefined>): unknown },
+		start: number,
+		end: number,
+		options?: Omit<RewriteCutOptions<Source, Data>, 'data'>,
+	): RewriteSlice<Source, Data>;
 }
 
 export interface RewriteSlice<Source extends RewriteSource, Data> {
@@ -214,11 +213,11 @@ class Rewrite<Source extends RewriteSource, Data> {
 				edits.add(start, Side.Slot, code);
 				this.addRemoval(start, end);
 			},
-			cut: (start, end, options) => {
+			cut: (start: number, end: number, options?: Partial<RewriteCutOptions<Source, Data>>) => {
 				this.check(start, end);
-				// `data` is left out only when `undefined` is a `Data`
-				const { data, placeholder } = options as { data: Data; placeholder?: RewriteCode<Source, Data> };
-				const cut = new Cut(this, start, end, data, placeholder);
+				const placeholder = options?.placeholder;
+				// `data` is left out only by a writer whose data can be `undefined`
+				const cut = new Cut(this, start, end, options?.data as Data, placeholder);
 				if (start === end) {
 					if (placeholder !== undefined) {
 						throw new RangeError(`The empty cut at ${start} cannot have a placeholder.`);
