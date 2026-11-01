@@ -33,8 +33,9 @@ const enum CharClass {
  * syntax whose tokens do not start inside such a word;
  * the `text` of a range maps as a whole to the start of the range, at the start of each of its lines but an empty last
  * one; new text maps nowhere, and where it starts a line or follows mapped text on one, a segment without a source
- * ends the mapping before it. The `name` of a range is the original name of the symbol that its generated text starts
- * with, as of a symbol that `text` renames; it goes in `names`, for the first segment of the range on a char.
+ * ends the mapping before it. The `name` of a range with `text` is the original name of the symbol that its generated
+ * text starts with, as of a symbol that `text` renames; it goes in `names`, for the first segment of the range on a
+ * char. Kept text is its own name, so the `name` of a range without `text` goes nowhere.
  */
 export function renderWithSourceMap<Source extends RewriteSource>(
 	render: (sink: (piece: Piece<{ source: Source; name?: string }>) => void) => void,
@@ -164,7 +165,7 @@ export function renderWithSourceMap<Source extends RewriteSource>(
 			return;
 		}
 		const { index, lineStarts } = sourceOf(piece.source);
-		pieceName = piece.name;
+		pieceName = piece.text === undefined ? undefined : piece.name;
 		let line = 0;
 		let high = lineStarts.length - 1;
 		while (line < high) {

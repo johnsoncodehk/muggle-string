@@ -30,13 +30,13 @@ function classAt(text: string, index: number) {
  * Where each generated char of `pieces` must map, by line and column: a kept char at the start of its piece, its line,
  * a word, a run of whitespace or as another char to itself, the `text` of a range to the start of the range at the
  * start of each of its lines but an empty last one, anything else nowhere, and `undefined` where the char before it maps.
- * The first position of a range has its `name`.
+ * The first position of a range with `text` has its `name`.
  */
 function expected(pieces: TestPiece[]) {
 	const result: (Position | null)[][] = [[]];
 	for (const piece of pieces) {
 		const text = rewritePieceText(piece);
-		let name = typeof piece === 'string' ? null : piece.name ?? null;
+		let name = typeof piece === 'string' || piece.text === undefined ? null : piece.name ?? null;
 		const at = (offset: number) => {
 			const position = { source: (piece as Exclude<TestPiece, string>).source.name, offset, name };
 			name = null;
@@ -181,7 +181,7 @@ describe('renderWithSourceMap', () => {
 		expect(map.mappings).toBe('AAAA;A;');
 	});
 
-	test('the name of a range goes in names, at its first segment only', () => {
+	test('the name of a range with text goes in names, at its first segment only', () => {
 		const { map } = check([
 			{ source: main, start: 0, end: 6, text: '\nlet\n', name: 'const' },
 			{ source: main, start: 6, end: 7, text: 'b', name: 'a' },
@@ -189,13 +189,25 @@ describe('renderWithSourceMap', () => {
 			{ source: main, start: 17, end: 18, text: 'b.c', name: 'a' },
 			{ source: main, start: 18, end: 21 },
 		]);
-		expect(map.names).toEqual(['const', 'a', 'kept']);
+		expect(map.names).toEqual(['const', 'a']);
+	});
+
+	test('kept text gives no name, as it is its own name, even with the name field of a view', () => {
+		const rewrite = createSourceRewrite<TestSource, { name: string }>(main);
+		rewrite.replace(6, 7, { source: main, start: 6, end: 7, text: 'b', name: 'a' });
+		const { map } = renderWithSourceMap(
+			sink => rewrite.render(0, main.content.length, sink, { name: 'view' }),
+			(from: TestSource) => from.name,
+		);
+		expect(map.names).toEqual(['a']);
+		const { map: kept } = check([{ source: main, start: 0, end: 13, name: 'kept' }]);
+		expect(kept.names).toEqual([]);
 	});
 
 	test('a name of a range that maps nothing goes nowhere', () => {
 		const { map } = check([
 			{ source: main, start: 0, end: 6, text: '', name: 'const' },
-			{ source: main, start: 6, end: 13, name: 'a' },
+			{ source: main, start: 6, end: 13, text: 'b = 1;\n', name: 'a' },
 			{ source: main, start: 13, end: 14, text: '\n', name: 'log' },
 		]);
 		expect(map.names).toEqual(['a']);

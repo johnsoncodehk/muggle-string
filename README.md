@@ -102,7 +102,7 @@ const { text: output, map: sourceMap } = renderWithSourceMap(
 
 - Kept text maps at the start of each line, word, run of whitespace, and every other char. A word is a run of Unicode letters, marks and digits. Chars like `_`, `$` and `-` map on their own, because languages disagree on whether they belong to a name. A position inside a word maps to the start of the word.
 - The `text` of a range maps to the start of the range.
-- The `name` of a range goes into `names`. Set it only when `text` renames the identifier at the range. A name on text that starts with another identifier, such as `__props.x` for `x`, makes a debugger show `__props` as `x`. muggle-string adds no names itself.
+- The `name` of a range with `text` goes into `names`. Set it only when `text` renames the identifier at the range. Kept text maps to itself, so the `name` of a range without `text`, such as a `name` field of the `data` of a view, goes nowhere. A name on text that starts with another identifier, such as `__props.x` for `x`, makes a debugger show `__props` as `x`. muggle-string adds no names itself.
 
 ## Span mappings
 
