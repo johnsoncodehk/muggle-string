@@ -404,25 +404,24 @@ Each technique in the table adds code. `npm run bench` builds the source and, fo
 
 | Technique | Workload | Warm, with → without | Cold, with → without |
 |---|---|---|---|
-| Edits and removals appended, sorted once at the first render | 100,000 edits in random order | 36.4 → 184 | 54.1 → 194 |
-| No sort when edits arrive in order | 100,000 edits in source order | 14.4 → 16.6 | 31.8 → 35.1 |
-| Writers merged in one pass | 100,000 edits in source order | 14.4 → 19.7 | 31.8 → 40.4 |
-| A view finds where it starts by binary search | 5,000 views after 100,000 edits | 14.8 → 316 | 35.7 → 187 |
-| Mappings written as bytes, decoded by chunk | source map after 100,000 edits in source order | 34.2 → 108 | 56.2 → 124 |
-| ASCII chars classed without a regular expression | the same source map | 34.2 → 51.4 | 56.2 → 73.4 |
-| A cut after all others of its level appended | 10,000 cuts in source order | 1.50 → 1.66 | 15.1 → 15.7 |
-| Kept text passed as ranges, not copied | spans of 100,000 edits, by length | 21.0 → 22.6 | 41.1 → 44.6 |
-| Keys and removals in `Int32Array` | 100,000 edits in random order | 36.4 → 39.0 | 54.1 → 55.9 |
+| Edits and removals appended, sorted once at a render | 100,000 edits in random order | 36.5 → 783 | 49.1 → 2,139 |
+| No sort when edits arrive in order | 100,000 edits in source order | 12.0 → 14.2 | 26.1 → 31.2 |
+| A view finds where it starts by binary search | 5,000 views after 100,000 edits | 12.2 → 317 | 29.9 → 252 |
+| Mappings written as bytes, decoded by chunk | source map after 100,000 edits in source order | 32.7 → 114 | 49.4 → 119 |
+| ASCII chars classed without a regular expression | the same source map | 32.7 → 51.4 | 49.4 → 66.8 |
+| A cut after all others of its level appended | 10,000 cuts in source order | 1.65 → 1.80 | 14.8 → 15.4 |
+| Kept text passed as ranges, not copied | spans of 100,000 edits, by length | 18.3 → 19.4 | 29.9 → 39.6 |
+| Keys and removals in `Int32Array` | 100,000 edits in random order | 36.5 → 39.9 | 49.1 → 52.4 |
 
-Where a technique is not used, it makes no difference: the in-order shortcuts on random edits, the map techniques on text renders, the view search on whole renders, the cut shortcut without cuts. The last three rows save 11% or less, and `Int32Array` is slightly slower than plain arrays for edits in source order (14.4 against 13.9).
+Where a technique is not used, it makes no difference: the in-order shortcuts on random edits, the map techniques on text renders, the view search on whole renders, the cut shortcut without cuts. The last three rows save 10% or less, and `Int32Array` is slightly slower than plain arrays for edits in source order (12.0 against 11.4).
 
 The baselines are the 0.4 segment array, whose every edit scans and splits the segments, and a sorted array that splices each edit into place:
 
 | Text render | muggle-string | sorted array, spliced | 0.4 segment array |
 |---|---|---|---|
-| 10,000 edits in random order, warm | 3.08 | 4.89 | 156 |
-| 100,000 edits in random order, warm | 36.4 | 408 | 21,977 (cold, one run) |
-| 100,000 edits in source order, warm | 14.4 | 17.6 | 32,898 (cold, one run) |
+| 10,000 edits in random order, warm | 2.96 | 4.86 | 155 |
+| 100,000 edits in random order, warm | 36.5 | 403 | 18,396 (cold, one run) |
+| 100,000 edits in source order, warm | 12.0 | 16.2 | 33,966 (cold, one run) |
 
 ## Reference
 
