@@ -1,6 +1,6 @@
 {
 	"name": "muggle-string",
-	"version": "1.0.0-alpha.4",
+	"version": "1.0.0-alpha.5",
 	"description": "Ranked, conflict-free rewrites of a source text, rendered as format-neutral pieces",
 	"type": "module",
 	"exports": {
