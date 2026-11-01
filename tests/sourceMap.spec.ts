@@ -66,10 +66,19 @@ function expected(pieces: TestPiece[]) {
 	return result;
 }
 
+const lineStartsOf = new Map<string, number[]>();
+
 function offsetOf(map: SourceMap, source: string, line: number, column: number) {
 	const content = map.sourcesContent[map.sources.indexOf(source)]!;
-	const lines = content.split('\n');
-	return lines.slice(0, line).reduce((offset, text) => offset + text.length + 1, 0) + column;
+	let lineStarts = lineStartsOf.get(content);
+	if (!lineStarts) {
+		lineStarts = [0];
+		for (const text of content.split('\n')) {
+			lineStarts.push(lineStarts[lineStarts.length - 1]! + text.length + 1);
+		}
+		lineStartsOf.set(content, lineStarts);
+	}
+	return lineStarts[line]! + column;
 }
 
 /**
