@@ -11,9 +11,11 @@ export interface SourceMap {
 
 const base64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 
-// Made at the first render, so that importing the module does nothing.
+// Made at the first call that needs them, so that importing the module only defines its functions and constants.
 let base64Codes: Uint8Array | undefined;
 let decoder: { decode(input: Uint8Array): string } | false | undefined;
+let space: RegExp | undefined;
+let word: RegExp | undefined;
 
 const comma = 44;
 const semicolon = 59;
@@ -247,9 +249,6 @@ function decode(bytes: Uint8Array, length: number) {
 	return code;
 }
 
-const space = /\s/y;
-const word = /[\p{L}\p{M}\p{N}]/uy;
-
 function classOf(content: string, offset: number, code: number) {
 	if (code < 128) {
 		return code === 32 || (code >= 9 && code <= 13)
@@ -258,10 +257,12 @@ function classOf(content: string, offset: number, code: number) {
 			? CharClass.Word
 			: CharClass.Other;
 	}
-	space.lastIndex = offset;
-	if (space.test(content)) {
+	const spaces = space ??= /\s/y;
+	spaces.lastIndex = offset;
+	if (spaces.test(content)) {
 		return CharClass.Space;
 	}
-	word.lastIndex = offset;
-	return word.test(content) ? CharClass.Word : CharClass.Other;
+	const words = word ??= /[\p{L}\p{M}\p{N}]/uy;
+	words.lastIndex = offset;
+	return words.test(content) ? CharClass.Word : CharClass.Other;
 }
