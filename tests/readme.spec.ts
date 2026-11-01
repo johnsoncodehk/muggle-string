@@ -2,36 +2,30 @@ import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { beforeAll, expect, test } from 'vitest';
-import { rewritePieceText } from '../src';
 
 const readme = fs.readFileSync(path.join(__dirname, '../README.md'), 'utf8').replace(/\r\n/g, '\n');
 const blocks = [...readme.matchAll(/^```ts\n(.*?)^```$/gms)].map(([, code]) => code!);
-const [usage, text, declaration, rendering, sourceMaps, spanMappings] = blocks;
+const declaration = blocks.find(block => block.startsWith('type Piece<'))!;
+const examples = blocks.filter(block => block !== declaration);
 const dir = path.join(__dirname, '.readme');
 
-/** The module of `example`, which renders the rewrite of the usage, exporting `names`. */
-function writeExample(name: string, example: string, names: string[]) {
-	const code = `${usage}\n${example}\nexport { ${names.join(', ')} };\n`;
-	fs.writeFileSync(path.join(dir, `${name}.ts`), code.replaceAll(`from 'muggle-string'`, `from '../../src'`));
-}
-
-/** The text of the comments that end `example`, which show what it gives. */
+/** The lines that the comments of `example` show it logs, in order: every comment at the start of a line. */
 function shown(example: string) {
-	const lines = example.trimEnd().split('\n');
-	let start = lines.length;
-	while (start && lines[start - 1]!.startsWith('// ')) {
-		start--;
-	}
-	return lines.slice(start).map(line => line.slice('// '.length)).join('\n');
+	return example.split('\n').filter(line => line.startsWith('// ')).map(line => line.slice('// '.length));
 }
 
 beforeAll(() => {
 	fs.rmSync(dir, { recursive: true, force: true });
 	fs.mkdirSync(dir);
-	writeExample('text', text!, ['output']);
-	writeExample('rendering', rendering!, ['pieces']);
-	writeExample('sourceMaps', sourceMaps!, ['output', 'sourceMap']);
-	writeExample('spanMappings', spanMappings!, ['spans']);
+	examples.forEach((example, index) => {
+		fs.writeFileSync(
+			path.join(dir, `example${index}.ts`),
+			'export const logged: string[] = [];\n'
+				// what console.log prints for these values, without the empty lines that a trailing newline adds
+				+ 'const console = { log(...values: (string | number | boolean)[]) { logged.push(...values.join(" ").replace(/\\n+$/, "").split("\\n")); } };\n'
+				+ example.replaceAll(`from 'muggle-string'`, `from '../../src'`),
+		);
+	});
 	fs.writeFileSync(
 		path.join(dir, 'declaration.ts'),
 		`import type { Piece as Declared } from '../../src';\n${declaration}`
@@ -55,9 +49,13 @@ beforeAll(() => {
 	);
 });
 
-test('the readme has the examples of the usage, its text, the pieces, the rendering, the source maps and the span mappings', () => {
-	expect(blocks.length).toBe(6);
-	expect(declaration).toMatch(/^type Piece</);
+test('the readme declares the piece type, and every other example shows what it logs', () => {
+	expect(declaration).toBeDefined();
+	expect(examples.length).toBeGreaterThan(0);
+	for (const example of examples) {
+		expect(example).toMatch(/console\.log\(/);
+		expect(shown(example).length).toBeGreaterThan(0);
+	}
 });
 
 test('the examples of the readme type check, and its piece type is the one of the package', () => {
@@ -66,34 +64,10 @@ test('the examples of the readme type check, and its piece type is the one of th
 	expect(stdout + stderr).toBe('');
 });
 
-test('the view of the readme renders the text that it shows', async () => {
-	const { output } = await import('./.readme/text');
-	expect(output.trimEnd()).toBe(shown(text!));
-});
-
-test('the pieces of the readme render the same text', async () => {
-	const { pieces } = await import('./.readme/rendering');
-	expect(pieces.map(rewritePieceText).join('').trimEnd()).toBe(shown(text!));
-});
-
-test('the source map of the readme is the one that it shows', async () => {
-	const { output, sourceMap } = await import('./.readme/sourceMaps');
-	expect(output.trimEnd()).toBe(shown(text!));
-	expect(JSON.stringify(sourceMap)).toBe(shown(sourceMaps!));
-});
-
-test('the span mappings of the readme are the ones that it shows, and map the text of each span to its range', async () => {
-	const { spans } = await import('./.readme/spanMappings');
-	expect(spans.map(span => JSON.stringify(span)).join('\n')).toBe(shown(spanMappings!));
-	const { output } = await import('./.readme/text');
-	for (const span of spans) {
-		const generated = output.slice(span.virtualStart, span.virtualEnd);
-		const original = 'log(name);\nconst name = "Ada";\n'.slice(span.originalStart, span.originalEnd);
-		if (span.kind === 'Verbatim') {
-			expect(generated).toBe(original);
-		}
-		else {
-			expect(original).toBe('name');
-		}
-	}
-});
+test.each(examples.map((example, index) => [index, example] as const))(
+	'example %i of the readme logs what its comments show',
+	async (index, example) => {
+		const { logged } = await import(/* @vite-ignore */ path.join(dir, `example${index}.ts`));
+		expect(logged).toEqual(shown(example));
+	},
+);
