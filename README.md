@@ -10,7 +10,7 @@ In vuejs/language-tools, plugins for props, emits, models, slots and refs all ed
 
 - **Edits stay correct.** The plugins do not know about each other. Removals add up, so no edit undoes another. Code belongs to a range of the text and nests by ranges, so the code of two plugins around the same expression nests the same way whatever order they run in. The tests in `tests/` check both with random edits.
 - **Maps are exact where tools read them.** The same pieces give the spans of a language server and a v3 source map for debuggers. In the source map, generated code maps to nothing, so a debugger never shows it as your code, even when it looks back across lines as V8 does. Kept code maps exactly at token starts in JavaScript, TypeScript, HTML and CSS, which is where breakpoints, stack traces and coverage read. The tests check every generated char of the map.
-- **Performance first.** A language server generates the code again after each change to a file, so the model skips work it does not need. A wrap or a replace is only appended to a list. No text is searched, split or copied when you edit. The first render sorts the edits once, or not at all when they arrived in order, and then freezes the rewrite, so later edits throw. A render passes kept text as ranges of the source and never copies it. Whether to build a string from the pieces is up to you. With Node 24 on an Apple M2, for a 1 MB text with 100,000 wraps and replaces at random offsets, each edit costs about 115 ns in a fresh process and about 37 ns once warm, however many came before, and rendering the text to a string takes about 40 ms cold and 29 ms warm.
+- **Performance first.** A language server generates the code again after each change to a file, so the model skips work it does not need. A wrap or a replace is only appended to a list. No text is searched, split or copied when you edit. A render sorts the edits once, or not at all when they arrived in order, and the renders after it reuse that until the next edit. A render passes kept text as ranges of the source and never copies it. Whether to build a string from the pieces is up to you. With Node 24 on an Apple M2, for a 1 MB text with 100,000 wraps and replaces at random offsets, each edit costs about 115 ns in a fresh process and about 37 ns once warm, however many came before, and rendering the text to a string takes about 40 ms cold and 29 ms warm.
 
 ## Adoption
 
@@ -258,7 +258,7 @@ console.log(ranges.join(' '));
 // 3..5 5..15 15..16 16..17
 ```
 
-Where the code is the text of the block, rewrite the block and render the range of the code as a view. Where it differs, such as after decoding entities, rewrite the code as its own source, and let the layer that makes the code give it as pieces in block offsets, through which kept ranges map back. The first render freezes a rewrite, so code made and rendered unit by unit needs a rewrite per unit.
+Where the code is the text of the block, rewrite the block and render the range of the code as a view. Where it differs, such as after decoding entities, rewrite the code as its own source, and let the layer that makes the code give it as pieces in block offsets, through which kept ranges map back.
 
 #### Several sources
 
@@ -304,15 +304,11 @@ attempt(() => rewrite.wrap(20, 20, 'x', ''));
 const first = rewrite.cut(0, 6);
 attempt(() => rewrite.cut(4, 9));
 // The cut 4..9 crosses the cut 0..6.
-rewrite.wrap(7, 14, '', first);
-rewrite.render(0, 14, () => {});
-attempt(() => rewrite.wrap(0, 1, 'x', ''));
-// The rewrite is already rendered.
-attempt(() => first.render(() => {}));
-// The cut 0..6 is already rendered; a slice renders once.
+attempt(() => rewrite.render(0, 14, () => rewrite.wrap(0, 1, 'x', '')));
+// The rewrite is rendering.
 ```
 
-Some errors depend on all edits, so the first render throws them:
+Some errors depend on all edits, so a render throws them:
 
 ```ts
 import { createSourceRewrite, type SourceRewrite } from 'muggle-string';
@@ -342,7 +338,7 @@ attempt(() => source.content = 'a = 2;\nb = 2;\n');
 
 The before of `wrap(2, 3, …)` renders with the first char of the cut, so a slice placed there is inside itself. A wrap that crosses a cut would render one side with the slice and the other where the slice was cut from.
 
-An edit that throws changes nothing, but the edits before it stay, so discard the rewrite after a throw. What the first render throws, every later render throws again.
+An edit that throws changes nothing. An error that a render throws comes from edits that stay, so every later render throws it too.
 
 #### Source maps
 
@@ -437,10 +433,10 @@ The baselines are the 0.4 segment array, whose every edit scans and splits the s
 - `replace(start, end, code)` removes `start`..`end` and puts `code` in its place, inside the wraps of the range. An empty range removes nothing; to map the code to the position, write `{ source, start: at, end: at, text }`.
 - Offsets of edits, cuts and views that are not integers in 0..the length of the content throw.
 - `rewrite.cut(start, end, options)` takes a range out and returns a slice. The slice renders the range, with every edit inside it, where you place it. `options.placeholder` renders where the range was.
-- Cuts can be made in any order. A cut inside another moves with it. A cut that crosses another throws, naming both ranges. A wrap that crosses a cut throws at the first render.
+- Cuts can be made in any order. A cut inside another moves with it. A cut that crosses another throws, naming both ranges. A wrap that crosses a cut throws when it renders.
 - Kept text of a slice gets the data of the code it renders in, with the other fields of `options` over it.
-- A slice renders exactly once. Rendering it again throws. A slice placed inside its own range, also by a wrap that starts at its start, throws at the first render. `rewrite.unrendered()` lists the slices that have not rendered yet.
-- The first render freezes the rewrite, so later edits throw. A render after the content of the source changed throws.
+- A slice renders wherever and as often as it is placed and rendered, as a view does. A slice placed inside its own range, also by a wrap that starts at its start, throws when it renders. `rewrite.unrendered()` lists the slices that have not rendered yet.
+- A render renders the edits made before it, so an edit after a render shows in the next one. An edit while a render runs, such as from its sink, throws. A render after the content of the source changed throws.
 
 </details>
 

@@ -616,44 +616,41 @@ describe('construction errors', () => {
 		expect(() => collect(aCut)).toThrow('The cut 0..3 is placed inside itself, so it never renders.');
 	});
 
-	test('rendering a cut again is an error that tells how', () => {
+	test('a slice and a view render as often as they are rendered or placed', () => {
 		const rewrite = createRewrite(s, 'abc');
 		const body = rewrite.cut(0, 3, { data: 'body' });
-		collect(body);
-		expect(() => collect(body)).toThrow('The cut 0..3 is already rendered; a slice renders once.');
+		expect([render(body), render(body)]).toEqual(['abc', 'abc']);
 
 		const twice = createRewrite(s, 'abc');
-		const whole = view(twice);
 		const moved = twice.cut(1, 2, { data: 'moved' });
 		twice.wrap(0, 1, moved, '');
 		twice.wrap(2, 3, '', moved);
-		expect(() => collect(whole)).toThrow('The cut 1..2 is placed twice.');
-
-		const placedAfter = createRewrite(s, 'abc');
-		const after = view(placedAfter);
-		const early = placedAfter.cut(1, 2, { data: 'early' });
-		placedAfter.wrap(2, 3, '', early);
-		collect(early);
-		expect(() => collect(after)).toThrow('The cut 1..2 is already rendered; a slice renders once.');
+		expect([render(view(twice)), render(view(twice))]).toEqual(['bacb', 'bacb']);
+		expect(twice.unrendered()).toEqual([]);
 	});
 
-	test('a view renders again, and a slice placed in it is then placed twice', () => {
+	test('an edit after a render renders in the next render', () => {
 		const rewrite = createRewrite(s, 'abc');
-		rewrite.wrap(1, 2, 'x', '');
-		expect([render(view(rewrite)), render(view(rewrite))]).toEqual(['axbc', 'axbc']);
-		const placing = createRewrite(s, 'abc');
-		placing.wrap(0, 1, placing.cut(1, 2, { data: 'moved' }), '');
-		expect(render(view(placing))).toBe('bac');
-		expect(() => render(view(placing))).toThrow('The cut 1..2 is placed twice.');
+		const slice = rewrite.cut(1, 2, { data: 'moved' });
+		rewrite.wrap(0, 1, slice, '');
+		expect(render(view(rewrite))).toBe('bac');
+		rewrite.wrap(1, 2, '(', ')');
+		rewrite.replace(2, 3, 'C');
+		expect(render(view(rewrite))).toBe('(b)aC');
+		expect(render(slice)).toBe('(b)');
+		const inner = rewrite.cut(0, 1, { data: 'inner' });
+		rewrite.wrap(2, 3, '', inner);
+		expect(render(view(rewrite))).toBe('C(b)a');
 	});
 
-	test('an edit after the first render is an error', () => {
+	test('an edit while the rewrite renders is an error', () => {
 		const rewrite = createRewrite(s, 'abc');
-		const body = view(rewrite);
-		collect(body);
-		expect(() => rewrite.wrap(1, 2, 'x', '')).toThrow('The rewrite is already rendered.');
-		expect(() => rewrite.replace(1, 2, 'x')).toThrow('The rewrite is already rendered.');
-		expect(() => rewrite.cut(1, 2, { data: 'late' })).toThrow('The rewrite is already rendered.');
+		const slice = rewrite.cut(1, 2, { data: 'moved' });
+		const message = 'The rewrite is rendering.';
+		expect(() => rewrite.render(0, 3, () => rewrite.wrap(0, 1, 'x', ''))).toThrow(message);
+		expect(() => slice.render(() => rewrite.replace(0, 1, 'x'))).toThrow(message);
+		expect(() => rewrite.render(0, 3, () => rewrite.cut(0, 1))).toThrow(message);
+		expect(render(view(rewrite))).toBe('ac');
 	});
 
 	test('the text of a kept range that is not an integer range of the content of its source, or has no source, is an error', () => {

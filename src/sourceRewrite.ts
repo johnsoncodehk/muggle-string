@@ -32,8 +32,8 @@ export interface RewriteSlice<S extends Source, Data = {}> {
 
 /**
  * Edits of one source text. Code belongs to a range of the text, and goes wherever that text goes; removals add up,
- * and text moves only by slices, which nest or are disjoint, so edits never conflict. The first render freezes the
- * edits.
+ * and text moves only by slices, which nest or are disjoint, so edits never conflict. A render renders the edits made
+ * before it; an edit while a render runs throws.
  */
 export interface SourceRewrite<S extends Source, Data = {}> {
 	/** The source that the rewrite edits, which its kept pieces carry. */
@@ -51,15 +51,13 @@ export interface SourceRewrite<S extends Source, Data = {}> {
 	replace(start: number, end: number, code: RewriteCode<S, Data>): void;
 	/**
 	 * The slice of `start`..`end` (not empty): its text, with the edits in it, renders where the slice is
-	 * placed, exactly once, kept text with the data of the code it renders in and over it the other fields of
-	 * `options`, and `placeholder` takes its place where it is cut from. Cuts are made in any
+	 * placed, kept text with the data of the code it renders in and over it the other fields of `options`, and
+	 * `placeholder` takes its place where it is cut from. Cuts are made in any
 	 * order: a cut inside another moves with it, of two cuts of one range the later is inside, and a cut that crosses
 	 * another, or a wrap, throws. Text that is not wanted is removed by `replace`; a slice is cut to be placed, and `unrendered`
 	 * tells one that is not.
 	 *
-	 * A slice that is placed in code that only its own render renders, as in its own range, throws at the first render.
-	 * A rewrite has no last render, as any slice can render by itself at any time: a slice placed in code that is never
-	 * rendered is not rendered, without an error.
+	 * A slice that is placed in code that only its own render renders, as in its own range, throws when it renders.
 	 */
 	cut(start: number, end: number, options?: RewriteCutOptions<S, Data>): RewriteSlice<S, Data>;
 	/**
@@ -195,6 +193,7 @@ class Edits<S extends Source, Data> {
 		this.keys = sortedKeys;
 		this.nests = sortedNests;
 		this.code = sortedCode;
+		this.sorted = true;
 	}
 }
 
@@ -218,8 +217,11 @@ class Rewrite<S extends Source, Data> {
 	cuts: Cut<S, Data>[] = [];
 	/** The outermost cuts, sorted and disjoint. */
 	roots: Cut<S, Data>[] = [];
+	/** Whether the edits are sorted and compiled for the edits so far. */
 	frozen = false;
-	/** What the first render threw, which every render throws. */
+	/** How many renders of the rewrite or its slices are running. */
+	rendering = 0;
+	/** What compiling the edits threw, which every render throws until the next edit. */
 	error: unknown;
 	/** The content of the source when the rewrite was made. */
 	readonly content: string;
@@ -258,9 +260,7 @@ class Rewrite<S extends Source, Data> {
 	}
 
 	private check(start: number, end: number) {
-		if (this.frozen) {
-			throw new Error('The rewrite is already rendered.');
-		}
+		this.thaw();
 		const { length } = this.content;
 		if (!isRange(start, end, length)) {
 			throw new RangeError(`${start === end ? `The offset ${start}` : `The range ${start}..${end}`} is out of 0..${length}.`);
@@ -272,9 +272,7 @@ class Rewrite<S extends Source, Data> {
 	 * of each level stay sorted and disjoint.
 	 */
 	cut(start: number, end: number, options: RewriteCutOptions<S, Data> | undefined) {
-		if (this.frozen) {
-			throw new Error('The rewrite is already rendered.');
-		}
+		this.thaw();
 		const { length } = this.content;
 		if (!isRange(start, end, length)) {
 			throw new RangeError(`The range ${start}..${end} is out of 0..${length}.`);
@@ -393,12 +391,12 @@ class Rewrite<S extends Source, Data> {
 				high = mid;
 			}
 		}
-		renderDepth++;
+		this.rendering++;
 		try {
 			this.renderSpan(pos, end, edit, this.edits.code.length, removal * 2, roots, index, data, sink, end === length);
 		}
 		finally {
-			renderDepth--;
+			this.rendering--;
 		}
 	}
 
@@ -484,6 +482,21 @@ class Rewrite<S extends Source, Data> {
 		this.removals[size] = start;
 		this.removals[size + 1] = end;
 		this.removalsSize = size + 2;
+	}
+
+	/** Lets the edits change: a render while they change would deliver part of the text from before the change. */
+	private thaw() {
+		if (this.rendering) {
+			throw new Error('The rewrite is rendering.');
+		}
+		if (this.frozen) {
+			this.frozen = false;
+			this.error = undefined;
+			for (const cut of this.cuts) {
+				cut.renderers = undefined;
+				cut.visit = Visit.Unvisited;
+			}
+		}
 	}
 
 	freeze() {
@@ -615,6 +628,7 @@ class Rewrite<S extends Source, Data> {
 		}
 		this.removals = removals;
 		this.removalsSize = merged;
+		this.removalsSorted = true;
 	}
 }
 
@@ -708,12 +722,8 @@ const enum Visit {
 const enum CutState {
 	Unrendered,
 	Rendering,
-	Placed,
-	RenderedByItself,
+	Rendered,
 }
-
-/** How deep the current render is in the renders of slices placed in code, across rewrites; 0 outside renders. */
-let renderDepth = 0;
 
 function nameCut(cut: { start: number; end: number }) {
 	return `The cut ${cut.start}..${cut.end}`;
@@ -748,27 +758,21 @@ class Cut<S extends Source, Data> implements RewriteSlice<S, Data> {
 	) {}
 
 	render(sink: (piece: Piece<RewriteOrigin<S, Data>>) => void, outer?: Data) {
-		this.rewrite.freeze();
-		const byItself = !renderDepth;
+		const { rewrite } = this;
+		rewrite.freeze();
 		if (this.state === CutState.Rendering) {
 			throw new Error(`${nameCut(this)} is placed inside itself, so it never renders.`);
 		}
-		if (this.state === CutState.Placed && !byItself) {
-			throw new Error(`${nameCut(this)} is placed twice.`);
-		}
-		if (this.state !== CutState.Unrendered) {
-			throw new Error(`${nameCut(this)} is already rendered; a slice renders once.`);
-		}
 		this.state = CutState.Rendering;
-		renderDepth++;
+		rewrite.rendering++;
 		try {
 			const { start, end, firstEdit, firstRemoval, children, data } = this;
 			const fields = data ? { ...outer, ...data } as Data : outer ?? {} as Data;
-			this.rewrite.renderSpan(start, end, firstEdit, this.endEdit, firstRemoval, children, 0, fields, sink, false);
+			rewrite.renderSpan(start, end, firstEdit, this.endEdit, firstRemoval, children, 0, fields, sink, false);
 		}
 		finally {
-			renderDepth--;
-			this.state = byItself ? CutState.RenderedByItself : CutState.Placed;
+			rewrite.rendering--;
+			this.state = CutState.Rendered;
 		}
 	}
 }

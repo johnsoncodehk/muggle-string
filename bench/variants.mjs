@@ -205,7 +205,7 @@ export const variants = [
 		replacements: [
 			{
 				file: 'sourceRewrite.ts',
-				find: /^\t\tlet index = 0;\n\t\tlet high = roots\.length;[\s\S]*?(?=^\t\trenderDepth\+\+;)/m,
+				find: /^\t\tlet index = 0;\n\t\tlet high = roots\.length;[\s\S]*?(?=^\t\tthis\.rendering\+\+;)/m,
 				replace: `		let index = 0;
 		while (index < roots.length && roots[index]!.end <= start) {
 			index++;
