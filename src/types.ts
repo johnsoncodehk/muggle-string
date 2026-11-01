@@ -11,7 +11,7 @@ export type Piece<Origin = unknown> = string | (Origin & {
 	text?: string;
 });
 
-/** A source text of a rewrite, by the identity that the ranges of its pieces carry. */
-export interface RewriteSource {
+/** A source text, by the identity that the ranges of pieces carry: a range without `text` copies its `content`. */
+export interface Source {
 	readonly content: string;
 }

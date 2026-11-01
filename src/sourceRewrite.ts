@@ -1,41 +1,41 @@
-import type { Piece, RewriteSource } from './types.js';
+import type { Piece, Source } from './types.js';
 
 /**
  * What a range of a rewrite carries beyond its offsets: its source, and the fields of the consumer that the view or the
  * slice that renders it gives, none by default.
  */
-export type RewriteOrigin<Source extends RewriteSource, Data = {}> = Data & { source: Source };
+export type RewriteOrigin<S extends Source, Data = {}> = Data & { source: S };
 
 /** Code written into a rewrite: pieces, slices, which render their cut in place, and arrays of code. */
-export type RewriteCode<Source extends RewriteSource, Data = {}> =
-	| Piece<RewriteOrigin<Source, Data>>
-	| RewriteSlice<Source, Data>
-	| readonly RewriteCode<Source, Data>[];
+export type RewriteCode<S extends Source, Data = {}> =
+	| Piece<RewriteOrigin<S, Data>>
+	| RewriteSlice<S, Data>
+	| readonly RewriteCode<S, Data>[];
 
 /** The fields of the kept pieces of the cut, and its placeholder. */
-export type RewriteCutOptions<Source extends RewriteSource, Data = {}> = Data & {
+export type RewriteCutOptions<S extends Source, Data = {}> = Data & {
 	/** The code that takes the place of the cut in the cut that contains it. */
-	placeholder?: RewriteCode<Source, Data>;
+	placeholder?: RewriteCode<S, Data>;
 };
 
-export interface RewriteWriter<Source extends RewriteSource, Data = {}> {
+export interface RewriteWriter<S extends Source, Data = {}> {
 	/**
 	 * `code` right before the text that starts at `offset`; it goes wherever that text goes. At the end of the text,
 	 * no text starts there: the code stays after all text.
 	 */
-	insertBefore(offset: number, code: RewriteCode<Source, Data>): void;
+	insertBefore(offset: number, code: RewriteCode<S, Data>): void;
 	/**
 	 * `code` right after the text that ends at `offset`; it goes wherever that text goes. At 0, no text ends there: the
 	 * code stays before all text.
 	 */
-	insertAfter(offset: number, code: RewriteCode<Source, Data>): void;
+	insertAfter(offset: number, code: RewriteCode<S, Data>): void;
 	/** The text at `start`..`end` (not empty) is not rendered; `code` takes the place of its first char. */
-	replace(start: number, end: number, code: RewriteCode<Source, Data>): void;
+	replace(start: number, end: number, code: RewriteCode<S, Data>): void;
 }
 
-export interface RewriteSlice<Source extends RewriteSource, Data = {}> {
+export interface RewriteSlice<S extends Source, Data = {}> {
 	/** Passes the pieces of the slice to `sink`, in order: no string is empty, and kept text is a range without `text`. */
-	render(sink: (piece: Piece<RewriteOrigin<Source, Data>>) => void): void;
+	render(sink: (piece: Piece<RewriteOrigin<S, Data>>) => void): void;
 }
 
 /**
@@ -43,14 +43,14 @@ export interface RewriteSlice<Source extends RewriteSource, Data = {}> {
  * only by slices, which nest or are disjoint, so edits never conflict. The rewrite is itself the outermost writer.
  * The first render freezes the edits.
  */
-export interface SourceRewrite<Source extends RewriteSource, Data = {}> extends RewriteWriter<Source, Data> {
+export interface SourceRewrite<S extends Source, Data = {}> extends RewriteWriter<S, Data> {
 	/** The source that the rewrite edits, which its kept pieces carry. */
-	readonly source: Source;
+	readonly source: S;
 	/**
 	 * The writer of `rank`, a non-negative integer. A higher rank sits outside a lower one, and the rewrite outside
 	 * all.
 	 */
-	writer(rank: number): RewriteWriter<Source, Data>;
+	writer(rank: number): RewriteWriter<S, Data>;
 	/**
 	 * The slice of `start`..`end` (not empty): its text, with the edits of all writers in it, renders where the slice is
 	 * placed, exactly once, kept text with the other fields of `options`, and `placeholder` takes its place where it is cut from. Cuts are made in any
@@ -65,9 +65,9 @@ export interface SourceRewrite<Source extends RewriteSource, Data = {}> extends 
 	cut(
 		start: number,
 		end: number,
-		...options: {} extends RewriteCutOptions<Source, Data> ? [options?: RewriteCutOptions<Source, Data>]
-			: [options: RewriteCutOptions<Source, Data>]
-	): RewriteSlice<Source, Data>;
+		...options: {} extends RewriteCutOptions<S, Data> ? [options?: RewriteCutOptions<S, Data>]
+			: [options: RewriteCutOptions<S, Data>]
+	): RewriteSlice<S, Data>;
 	/**
 	 * Passes the pieces of the text at `start`..`end`, with the edits in it, to `sink`, kept text with the fields of
 	 * `data`: a view, which owns no text, so views can overlap and render again. The text of a slice renders where the
@@ -77,14 +77,14 @@ export interface SourceRewrite<Source extends RewriteSource, Data = {}> extends 
 	render(
 		start: number,
 		end: number,
-		sink: (piece: Piece<RewriteOrigin<Source, Data>>) => void,
+		sink: (piece: Piece<RewriteOrigin<S, Data>>) => void,
 		...data: {} extends Data ? [data?: Data] : [data: Data]
 	): void;
 	/**
 	 * The slices that have not rendered, in cut order: after the last render of its consumer, those that it placed
 	 * nowhere, or in code that it did not render.
 	 */
-	unrendered(): RewriteSlice<Source, Data>[];
+	unrendered(): RewriteSlice<S, Data>[];
 }
 
 /**
@@ -92,25 +92,25 @@ export interface SourceRewrite<Source extends RewriteSource, Data = {}> extends 
  * its kept pieces carry beyond their source and offsets, which the cuts and views give.
  */
 export function createSourceRewrite<
-	Source extends RewriteSource,
+	S extends Source,
 	Data extends object = {},
->(source: Source): SourceRewrite<Source, Data> {
-	const rewrite = new Rewrite<Source, Data>(source);
+>(source: S): SourceRewrite<S, Data> {
+	const rewrite = new Rewrite<S, Data>(source);
 	return {
 		...rewrite.core,
 		source,
 		writer: rank => rewrite.writer(rank),
-		cut: (start: number, end: number, options?: RewriteCutOptions<Source, Data>) => rewrite.cut(start, end, options),
-		render: (start: number, end: number, sink: Sink<Source, Data>, data?: Data) =>
+		cut: (start: number, end: number, options?: RewriteCutOptions<S, Data>) => rewrite.cut(start, end, options),
+		render: (start: number, end: number, sink: Sink<S, Data>, data?: Data) =>
 			rewrite.render(start, end, data ?? {} as Data, sink),
 		unrendered: () => rewrite.cuts.filter(cut => cut.state === CutState.Unrendered),
 	};
 }
 
-type Sink<Source extends RewriteSource, Data> = (piece: Piece<RewriteOrigin<Source, Data>>) => void;
+type Sink<S extends Source, Data> = (piece: Piece<RewriteOrigin<S, Data>>) => void;
 
 /** The generated text of `piece`: new text, the `text` of a range, or the content of its source that it keeps. */
-export function rewritePieceText(piece: Piece<{ source: RewriteSource }>): string {
+export function rewritePieceText(piece: Piece<{ source: Source }>): string {
 	return typeof piece === 'string' ? piece : piece.text ?? piece.source.content.slice(piece.start, piece.end);
 }
 
@@ -130,20 +130,20 @@ const enum Side {
  * 2 ** 31, as text is shorter than 2 ** 29. `insertAfter(0)` anchors before the char -1, so it renders before all
  * text, and `insertBefore(length)` after the char `length`, so it renders after all text.
  */
-class Edits<Source extends RewriteSource, Data> {
+class Edits<S extends Source, Data> {
 	/** The keys of the edits, as many as `code`. */
 	keys = new Int32Array(16);
-	code: RewriteCode<Source, Data>[] = [];
+	code: RewriteCode<S, Data>[] = [];
 	/** Whether the edits arrived in render order. */
 	sorted = true;
 
 	constructor(
 		readonly rank: number,
 		/** The writer that adds the edits. */
-		readonly writer: RewriteWriter<Source, Data>,
+		readonly writer: RewriteWriter<S, Data>,
 	) {}
 
-	add(at: number, side: Side, code: RewriteCode<Source, Data>) {
+	add(at: number, side: Side, code: RewriteCode<S, Data>) {
 		let keys = this.keys;
 		const size = this.code.length;
 		const key = at * 4 + side;
@@ -172,7 +172,7 @@ class Edits<Source extends RewriteSource, Data> {
 		}
 		sorted.sort((a, b) => keys[a]! - keys[b]! || a - b);
 		const sortedKeys = new Int32Array(size);
-		const sortedCode: RewriteCode<Source, Data>[] = [];
+		const sortedCode: RewriteCode<S, Data>[] = [];
 		for (let index = 0; index < size; index++) {
 			sortedKeys[index] = keys[sorted[index]!]!;
 			sortedCode.push(code[sorted[index]!]!);
@@ -182,32 +182,32 @@ class Edits<Source extends RewriteSource, Data> {
 	}
 }
 
-class Rewrite<Source extends RewriteSource, Data> {
+class Rewrite<S extends Source, Data> {
 	/** The writer of the outermost rank, which the rewrite is. */
-	readonly core: RewriteWriter<Source, Data>;
+	readonly core: RewriteWriter<S, Data>;
 	/** The edits of each writer, by rank. */
-	edits = new Map<number, Edits<Source, Data>>();
+	edits = new Map<number, Edits<S, Data>>();
 	/** Removed ranges as flat start, end pairs; sorted and merged when frozen. */
 	removals = new Int32Array(16);
 	removalsSize = 0;
 	/** Whether the removals arrived in order of start. */
 	removalsSorted = true;
 	/** The cuts, in call order. */
-	cuts: Cut<Source, Data>[] = [];
+	cuts: Cut<S, Data>[] = [];
 	/** The outermost cuts, sorted and disjoint. */
-	roots: Cut<Source, Data>[] = [];
+	roots: Cut<S, Data>[] = [];
 	frozen = false;
 	/** What the first render threw, which every render throws. */
 	error: unknown;
 	/** When frozen, the keys and code of the edits of all writers, in render order. */
 	keys: Int32Array = new Int32Array(0);
-	code: RewriteCode<Source, Data>[] = [];
+	code: RewriteCode<S, Data>[] = [];
 
-	constructor(readonly source: Source) {
+	constructor(readonly source: S) {
 		this.core = this.createEdits(coreRank).writer;
 	}
 
-	writer(rank: number): RewriteWriter<Source, Data> {
+	writer(rank: number): RewriteWriter<S, Data> {
 		if (!Number.isInteger(rank) || rank < 0 || rank >= coreRank) {
 			throw new RangeError(`The rank ${rank} is not a non-negative integer below the rank of the rewrite.`);
 		}
@@ -215,7 +215,7 @@ class Rewrite<Source extends RewriteSource, Data> {
 	}
 
 	private createEdits(rank: number) {
-		const writer: RewriteWriter<Source, Data> = {
+		const writer: RewriteWriter<S, Data> = {
 			insertBefore: (offset, code) => {
 				this.check(offset, offset);
 				edits.add(offset, offset === this.source.content.length ? Side.After : Side.Before, code);
@@ -252,7 +252,7 @@ class Rewrite<Source extends RewriteSource, Data> {
 	 * The cut of `start`..`end`, inside the innermost cut that holds the range, around the cuts in the range; the cuts
 	 * of each level stay sorted and disjoint.
 	 */
-	cut(start: number, end: number, options: RewriteCutOptions<Source, Data> | undefined) {
+	cut(start: number, end: number, options: RewriteCutOptions<S, Data> | undefined) {
 		if (this.frozen) {
 			throw new Error('The rewrite is already rendered.');
 		}
@@ -263,12 +263,12 @@ class Rewrite<Source extends RewriteSource, Data> {
 		if (start === end) {
 			throw new RangeError(`The cut at ${start} moves no char.`);
 		}
-		let placeholder: RewriteCode<Source, Data> | undefined;
+		let placeholder: RewriteCode<S, Data> | undefined;
 		let data = {} as Data;
 		if (options) {
 			({ placeholder, ...data as {} } = options);
 		}
-		let parent: Cut<Source, Data> | undefined;
+		let parent: Cut<S, Data> | undefined;
 		let siblings = this.roots;
 		while (true) {
 			let low = siblings.length;
@@ -299,7 +299,7 @@ class Rewrite<Source extends RewriteSource, Data> {
 					throw new RangeError(`The cut ${start}..${end} crosses ${nameCut(inner).toLowerCase()}.`);
 				}
 			}
-			const cut = new Cut<Source, Data>(this, parent, start, end, data, placeholder);
+			const cut = new Cut<S, Data>(this, parent, start, end, data, placeholder);
 			if (last === siblings.length && low === last) {
 				siblings.push(cut);
 			}
@@ -318,7 +318,7 @@ class Rewrite<Source extends RewriteSource, Data> {
 	}
 
 	/** The view `start`..`end`. */
-	render(start: number, end: number, data: Data, sink: (piece: Piece<RewriteOrigin<Source, Data>>) => void) {
+	render(start: number, end: number, data: Data, sink: (piece: Piece<RewriteOrigin<S, Data>>) => void) {
 		const { length } = this.source.content;
 		if (!isRange(start, end, length)) {
 			throw new RangeError(`The range ${start}..${end} is out of 0..${length}.`);
@@ -386,10 +386,10 @@ class Rewrite<Source extends RewriteSource, Data> {
 		end: number,
 		edit: number,
 		removal: number,
-		children: readonly Cut<Source, Data>[] | undefined,
+		children: readonly Cut<S, Data>[] | undefined,
 		index: number,
 		data: Data,
-		sink: (piece: Piece<RewriteOrigin<Source, Data>>) => void,
+		sink: (piece: Piece<RewriteOrigin<S, Data>>) => void,
 		tail: boolean,
 	) {
 		const { keys, code, removals, removalsSize, source } = this;
@@ -482,7 +482,7 @@ class Rewrite<Source extends RewriteSource, Data> {
 	 * end, and the cut that owns each edit, in one walk of the cuts in the order of their starts and ends. Then checks
 	 * the placements of the cuts.
 	 */
-	private compile(writers: Edits<Source, Data>[]) {
+	private compile(writers: Edits<S, Data>[]) {
 		const [keys, code, positions] = mergeEdits(writers);
 		this.keys = keys;
 		this.code = code;
@@ -492,17 +492,17 @@ class Rewrite<Source extends RewriteSource, Data> {
 		const count = code.length;
 		const { removals, removalsSize } = this;
 		/** The cut that owns each edit, by its index in `code`. */
-		const owners: (Cut<Source, Data> | undefined)[] = [];
+		const owners: (Cut<S, Data> | undefined)[] = [];
 		let edit = 0;
 		let removal = 0;
 		/** The cuts entered and not left but the innermost, `owner`, each with the index of its next child. */
-		const path: (Cut<Source, Data> | undefined)[] = [];
+		const path: (Cut<S, Data> | undefined)[] = [];
 		const nextChild: number[] = [];
-		let owner: Cut<Source, Data> | undefined;
-		let children: Cut<Source, Data>[] | undefined = this.roots;
+		let owner: Cut<S, Data> | undefined;
+		let children: Cut<S, Data>[] | undefined = this.roots;
 		let index = 0;
 		while (true) {
-			const child: Cut<Source, Data> | undefined = children?.[index];
+			const child: Cut<S, Data> | undefined = children?.[index];
 			// enters the next child, or leaves the cut
 			const at = child ? child.start : owner ? owner.end : Infinity;
 			for (; edit < count && keys[edit]! < at * 4; edit++) {
@@ -529,7 +529,7 @@ class Rewrite<Source extends RewriteSource, Data> {
 			children = owner ? owner.children : this.roots;
 		}
 		/** The cuts that have renderers. */
-		const placed: Cut<Source, Data>[] = [];
+		const placed: Cut<S, Data>[] = [];
 		// by writer and in the order of each, which decides the cut that the error of a cycle names
 		for (let writer = 0; writer < writers.length; writer++) {
 			const edits = writers[writer]!;
@@ -588,9 +588,9 @@ class Rewrite<Source extends RewriteSource, Data> {
  * (highest rank) first, and the code in the place of the char and after the text innermost first. With more than one
  * writer, also the merged index of each edit of each writer.
  */
-function mergeEdits<Source extends RewriteSource, Data>(
-	writers: Edits<Source, Data>[],
-): [Int32Array, RewriteCode<Source, Data>[], Int32Array[]?] {
+function mergeEdits<S extends Source, Data>(
+	writers: Edits<S, Data>[],
+): [Int32Array, RewriteCode<S, Data>[], Int32Array[]?] {
 	if (writers.length < 2) {
 		return writers.length ? [writers[0]!.keys, writers[0]!.code] : [new Int32Array(0), []];
 	}
@@ -599,7 +599,7 @@ function mergeEdits<Source extends RewriteSource, Data>(
 		total += edits.code.length;
 	}
 	const keys = new Int32Array(total);
-	const merged: RewriteCode<Source, Data>[] = [];
+	const merged: RewriteCode<S, Data>[] = [];
 	const positions = writers.map(edits => new Int32Array(edits.code.length));
 	const next = writers.map(() => 0);
 	while (true) {
@@ -649,16 +649,16 @@ function mergeEdits<Source extends RewriteSource, Data>(
  * Records the cuts of `rewrite` placed in `code` as rendered by `renderer`, and adds each to `placed` the first time;
  * a view is no renderer. Not a closure in `compile`: a new closure at each freeze makes V8 deoptimize the call.
  */
-function place<Source extends RewriteSource, Data>(
-	rewrite: Rewrite<Source, Data>,
-	placed: Cut<Source, Data>[],
-	code: RewriteCode<Source, Data>,
-	renderer: Cut<Source, Data>,
+function place<S extends Source, Data>(
+	rewrite: Rewrite<S, Data>,
+	placed: Cut<S, Data>[],
+	code: RewriteCode<S, Data>,
+	renderer: Cut<S, Data>,
 ) {
 	if (typeof code === 'string') {
 		return;
 	}
-	if (isCodeArray<Source, Data>(code)) {
+	if (isCodeArray<S, Data>(code)) {
 		for (let index = 0; index < code.length; index++) {
 			place(rewrite, placed, code[index]!, renderer);
 		}
@@ -679,9 +679,9 @@ function place<Source extends RewriteSource, Data>(
  * cuts placed in it. Code at a char renders in the innermost cut that owns the char, and a placeholder in the cut
  * around its own.
  */
-function checkRenderers<Source extends RewriteSource, Data>(placed: Cut<Source, Data>[]) {
+function checkRenderers<S extends Source, Data>(placed: Cut<S, Data>[]) {
 	/** The walked cuts, each with the index of its next renderer. */
-	const path: Cut<Source, Data>[] = [];
+	const path: Cut<S, Data>[] = [];
 	const next: number[] = [];
 	for (const first of placed) {
 		if (first.visit) {
@@ -736,11 +736,11 @@ function isRange(start: number, end: number, length: number) {
 	return Number.isInteger(start) && Number.isInteger(end) && start >= 0 && start <= end && end <= length;
 }
 
-class Cut<Source extends RewriteSource, Data> implements RewriteSlice<Source, Data> {
+class Cut<S extends Source, Data> implements RewriteSlice<S, Data> {
 	/** The cuts directly inside, sorted and disjoint. */
-	children: Cut<Source, Data>[] | undefined;
+	children: Cut<S, Data>[] | undefined;
 	/** The cuts whose render renders code that it is placed in. */
-	renderers: Cut<Source, Data>[] | undefined;
+	renderers: Cut<S, Data>[] | undefined;
 	visit = Visit.Unvisited;
 	state = CutState.Unrendered;
 	/** When frozen, the indexes of the edits and removals of the rewrite at its start and at its end. */
@@ -750,16 +750,16 @@ class Cut<Source extends RewriteSource, Data> implements RewriteSlice<Source, Da
 	endRemoval = 0;
 
 	constructor(
-		readonly rewrite: Rewrite<Source, Data>,
+		readonly rewrite: Rewrite<S, Data>,
 		/** The cut that contains it directly, which renders its placeholder; none for a view. */
-		public parent: Cut<Source, Data> | undefined,
+		public parent: Cut<S, Data> | undefined,
 		readonly start: number,
 		readonly end: number,
 		readonly data: Data,
-		readonly placeholder: RewriteCode<Source, Data> | undefined,
+		readonly placeholder: RewriteCode<S, Data> | undefined,
 	) {}
 
-	render(sink: (piece: Piece<RewriteOrigin<Source, Data>>) => void) {
+	render(sink: (piece: Piece<RewriteOrigin<S, Data>>) => void) {
 		this.rewrite.freeze();
 		const byItself = !renderDepth;
 		if (this.state === CutState.Rendering) {
@@ -784,29 +784,29 @@ class Cut<Source extends RewriteSource, Data> implements RewriteSlice<Source, Da
 	}
 }
 
-function renderCode<Source extends RewriteSource, Data>(code: RewriteCode<Source, Data>, sink: (piece: Piece<RewriteOrigin<Source, Data>>) => void) {
+function renderCode<S extends Source, Data>(code: RewriteCode<S, Data>, sink: (piece: Piece<RewriteOrigin<S, Data>>) => void) {
 	if (typeof code === 'string') {
 		if (code) {
 			sink(code);
 		}
 	}
-	else if (isCodeArray<Source, Data>(code)) {
+	else if (isCodeArray<S, Data>(code)) {
 		for (let index = 0; index < code.length; index++) {
 			renderCode(code[index]!, sink);
 		}
 	}
-	else if (isSlice<Source, Data>(code)) {
+	else if (isSlice<S, Data>(code)) {
 		code.render(sink);
 	}
 	else {
-		sink(code as Piece<RewriteOrigin<Source, Data>>);
+		sink(code as Piece<RewriteOrigin<S, Data>>);
 	}
 }
 
-function isCodeArray<Source extends RewriteSource, Data>(code: RewriteCode<Source, Data>): code is readonly RewriteCode<Source, Data>[] {
+function isCodeArray<S extends Source, Data>(code: RewriteCode<S, Data>): code is readonly RewriteCode<S, Data>[] {
 	return Array.isArray(code);
 }
 
-function isSlice<Source extends RewriteSource, Data>(code: RewriteCode<Source, Data>): code is RewriteSlice<Source, Data> {
-	return typeof (code as RewriteSlice<Source, Data>).render === 'function';
+function isSlice<S extends Source, Data>(code: RewriteCode<S, Data>): code is RewriteSlice<S, Data> {
+	return typeof (code as RewriteSlice<S, Data>).render === 'function';
 }

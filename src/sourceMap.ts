@@ -1,4 +1,4 @@
-import type { Piece, RewriteSource } from './types.js';
+import type { Piece, Source } from './types.js';
 
 /** A source map of generated text to its sources, in the v3 format. */
 export interface SourceMap {
@@ -39,13 +39,13 @@ const enum CharClass {
  * text starts with, as of a symbol that `text` renames; it goes in `names`, for the first segment of the range on a
  * char. Kept text is its own name, so the `name` of a range without `text` goes nowhere.
  */
-export function renderWithSourceMap<Source extends RewriteSource>(
-	render: (sink: (piece: Piece<{ source: Source; name?: string }>) => void) => void,
-	sourceName: (source: Source) => string,
+export function renderWithSourceMap<S extends Source>(
+	render: (sink: (piece: Piece<{ source: S; name?: string }>) => void) => void,
+	sourceName: (source: S) => string,
 ): { text: string; map: SourceMap } {
 	// before the render, which may render slices that render only once
 	const latin1 = decoder ??= createDecoder();
-	const sources = new Map<Source, { index: number; lineStarts: number[] }>();
+	const sources = new Map<S, { index: number; lineStarts: number[] }>();
 	const map: SourceMap = { version: 3, sources: [], sourcesContent: [], names: [], mappings: '' };
 	let text = '';
 	const digits = base64Codes ??= Uint8Array.from(base64, char => char.charCodeAt(0));
@@ -131,7 +131,7 @@ export function renderWithSourceMap<Source extends RewriteSource>(
 		}
 		column += code.length - lineStart;
 	};
-	const sourceOf = (source: Source) => {
+	const sourceOf = (source: S) => {
 		let known = sources.get(source);
 		if (!known) {
 			const { content } = source;
