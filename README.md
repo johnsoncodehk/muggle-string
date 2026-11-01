@@ -233,6 +233,32 @@ Offsets always point into the original text, also after other edits.
 | read the result | `rewrite.render(0, source.content.length, piece => text += rewritePieceText(piece))` |
 | get a source map | `renderWithSourceMap`, above |
 
+## What the techniques save
+
+Each technique in the table adds code. `npm run bench` builds the source and, for each technique, a variant with only that technique taken out (`bench/variants.mjs`), checks that all of them give the same output by hash, and times each in a fresh process on fixed inputs: about 1 MB of code-like text, and edits at distinct offsets from 4 writers. `bench/table.mjs` makes the tables below. Each figure is a single round, so differences of a few percent are near the noise. Node 24.15, Apple M2, in ms; cold is the first run in a process, warm the median of 20 runs after 20 more.
+
+| Technique | Workload | Warm, with → without | Cold, with → without |
+|---|---|---|---|
+| Edits and removals appended, sorted once at the first render | 100,000 edits in random order | 36.4 → 184 | 54.1 → 194 |
+| No sort when edits arrive in order | 100,000 edits in source order | 14.4 → 16.6 | 31.8 → 35.1 |
+| Writers merged in one pass | 100,000 edits in source order | 14.4 → 19.7 | 31.8 → 40.4 |
+| A view finds where it starts by binary search | 5,000 views after 100,000 edits | 14.8 → 316 | 35.7 → 187 |
+| Mappings written as bytes, decoded by chunk | source map after 100,000 edits in source order | 34.2 → 108 | 56.2 → 124 |
+| ASCII chars classed without a regular expression | the same source map | 34.2 → 51.4 | 56.2 → 73.4 |
+| A cut after all others of its level appended | 10,000 cuts in source order | 1.50 → 1.66 | 15.1 → 15.7 |
+| Kept text passed as ranges, not copied | spans of 100,000 edits, by length | 21.0 → 22.6 | 41.1 → 44.6 |
+| Keys and removals in `Int32Array` | 100,000 edits in random order | 36.4 → 39.0 | 54.1 → 55.9 |
+
+Where a technique is not used, it makes no difference: the in-order shortcuts on random edits, the map techniques on text renders, the view search on whole renders, the cut shortcut without cuts. The last three rows save 11% or less, and `Int32Array` is slightly slower than plain arrays for edits in source order (14.4 against 13.9).
+
+The baselines are the 0.4 segment array, whose every edit scans and splits the segments, and a sorted array that splices each edit into place:
+
+| Text render | muggle-string | sorted array, spliced | 0.4 segment array |
+|---|---|---|---|
+| 10,000 edits in random order, warm | 3.08 | 4.89 | 156 |
+| 100,000 edits in random order, warm | 36.4 | 408 | 21,977 (cold, one run) |
+| 100,000 edits in source order, warm | 14.4 | 17.6 | 32,898 (cold, one run) |
+
 ## Reference
 
 <details>
