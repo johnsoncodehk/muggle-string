@@ -12,11 +12,6 @@ In vuejs/language-tools, plugins for props, emits, models, slots and refs all ed
 - **Maps are exact where tools read them.** The same pieces give the spans of a language server and a v3 source map for debuggers. In the source map, generated code maps to nothing, so a debugger never shows it as your code, even when it looks back across lines as V8 does. Kept code maps exactly at token starts in JavaScript, TypeScript, HTML and CSS, which is where breakpoints, stack traces and coverage read. The tests check every generated char of the map.
 - **Performance first.** A language server generates the code again after each change to a file, so the model skips work it does not need. An insert or a replace is only appended to the list of its writer. No text is searched, split or copied when you edit. The first render sorts the edits once, or not at all when they arrived in order, and then freezes the rewrite, so later edits throw. A render passes kept text as ranges of the source and never copies it. Whether to build a string from the pieces is up to you. With Node 24 on an Apple M2, for a 1 MB text with 100,000 inserts and replaces at random offsets from 4 writers, each edit costs about 115 ns in a fresh process and about 37 ns once warm, however many came before, and rendering the text to a string takes about 40 ms cold and 29 ms warm.
 
-## Adoption
-
-- [vuejs/language-tools](https://github.com/vuejs/language-tools): generates the TypeScript code of Vue single-file components. Its releases use 0.4; the move to 1.0 is in progress and not released.
-- [muggle-pug](https://github.com/johnsoncodehk/muggle-pug): compiles Pug to HTML as `Piece` ranges.
-
 ## Install
 
 1.0 is on the `next` tag: `npm install muggle-string@next`. It ships as ES modules only. CommonJS code can `require` it on Node 20.19 and later, or 22.12 and later. `renderWithSourceMap` also needs the global `TextDecoder` of the WHATWG Encoding Standard, as Node and Bun define it.
