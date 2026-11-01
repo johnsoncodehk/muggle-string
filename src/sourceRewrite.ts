@@ -39,9 +39,22 @@ export interface SourceRewrite<S extends Source, Data = {}> {
 	/** The source that the rewrite edits, which its kept pieces carry. */
 	readonly source: S;
 	/**
+	 * `code` at the point `offset`, with the text after it: it renders with the char at `offset`, or at the end of the
+	 * text after all text. At one point, it goes after the code of `insertAfter` and outside the wraps that start
+	 * there; inserts at one point keep call order.
+	 */
+	insertBefore(offset: number, code: RewriteCode<S, Data>): void;
+	/**
+	 * `code` at the point `offset`, with the text before it: it renders with the char before `offset`, or at 0 before
+	 * all text. At one point, it goes before the code of `insertBefore` and outside the wraps that end there; inserts
+	 * at one point keep call order.
+	 */
+	insertAfter(offset: number, code: RewriteCode<S, Data>): void;
+	/**
 	 * `before` before the text at `start`..`end` and `after` after it, around the code already there: wraps nest by
 	 * their ranges, and of one range, a later wrap goes outside. Before renders with the first char of the range,
-	 * after with its last; an empty range is at the char at `start`, or at the end of the text after it.
+	 * after with its last; an empty range wraps the code that replaces it, at the char at `start`, or at the end of
+	 * the text after it.
 	 */
 	wrap(start: number, end: number, before: RewriteCode<S, Data>, after: RewriteCode<S, Data>): void;
 	/**
@@ -90,6 +103,8 @@ export function createSourceRewrite<
 	const rewrite = new Rewrite<S, Data>(source);
 	return {
 		source,
+		insertBefore: (offset, code) => rewrite.insertBefore(offset, code),
+		insertAfter: (offset, code) => rewrite.insertAfter(offset, code),
 		wrap: (start, end, before, after) => rewrite.wrap(start, end, before, after),
 		replace: (start, end, code) => rewrite.replace(start, end, code),
 		cut: (start, end, options) => rewrite.cut(start, end, options),
@@ -125,20 +140,22 @@ export function rewritePieceText(piece: Piece<{ source: Source }>): string {
 	return content.slice(start, end);
 }
 
-// the sides of a char, in render order: code before the text that starts at the char, code in the place of the char,
-// code after the text that ends at the char
+// the sides of a char, in render order: code at the point before the char, code before the text that starts at the
+// char, code in the place of the char, code after the text that ends at the char and then at the point after it
 const enum Side {
+	Point,
 	Before,
 	Slot,
 	After,
 }
 
 /**
- * The edits, each at a side of a char, as the key `at * 4 + side`, which sorts in render order; keys are below 2 ** 31,
- * as text is shorter than 2 ** 29. Of one key, the edits go by their nests: before the text, the wrap with the greater
- * end first; after the text, the wrap with the greater start first; in the place of the char, the befores of empty
- * wraps (0), the replacements (1), and the afters of empty wraps (2). Of one nest, in call order, but the befores of
- * wraps in reverse, as a later wrap goes outside.
+ * The edits, each at a side of a char, as the key `at * 4 + side`, which sorts in render order; keys are from -1, the
+ * point before all text, and below 2 ** 31, as text is shorter than 2 ** 29. Of one key, the edits go by their nests:
+ * before the text, the wrap with the greater end first; after the text, the wrap with the greater start first, then
+ * the inserts at the point after the char (1); in the place of the char, the befores of empty wraps (0), the
+ * replacements (1), and the afters of empty wraps (2). Of one nest, in call order, but the befores of wraps in
+ * reverse, as a later wrap goes outside.
  */
 class Edits<S extends Source, Data> {
 	/** The keys of the edits, as many as `code`. */
@@ -230,6 +247,20 @@ class Rewrite<S extends Source, Data> {
 		this.content = source.content;
 	}
 
+	insertBefore(offset: number, code: RewriteCode<S, Data>) {
+		this.check(offset, offset);
+		if (code !== '') {
+			this.edits.add(offset, Side.Point, 0, code);
+		}
+	}
+
+	insertAfter(offset: number, code: RewriteCode<S, Data>) {
+		this.check(offset, offset);
+		if (code !== '') {
+			this.edits.add(offset - 1, Side.After, 1, code);
+		}
+	}
+
 	wrap(start: number, end: number, before: RewriteCode<S, Data>, after: RewriteCode<S, Data>) {
 		this.check(start, end);
 		const { edits } = this;
@@ -253,6 +284,9 @@ class Rewrite<S extends Source, Data> {
 
 	replace(start: number, end: number, code: RewriteCode<S, Data>) {
 		this.check(start, end);
+		if (start === end && code === '') {
+			return;
+		}
 		this.edits.add(start, Side.Slot, 1, code);
 		if (start < end) {
 			this.addRemoval(start, end);
@@ -428,7 +462,7 @@ class Rewrite<S extends Source, Data> {
 			// before a child, the edits before its own, which include those of the wraps around it at its first char
 			const limit = entering ? child.firstEdit : editEnd;
 			while (true) {
-				// no key is negative
+				// no key is below -1
 				const key = edit < limit && (entering || keys[edit]! < last) ? keys[edit]! : -8;
 				const to = key === -8 ? stop : (key >> 2) + ((key & 3) === Side.After ? 1 : 0);
 				while (pos < to) {
@@ -548,7 +582,7 @@ class Rewrite<S extends Source, Data> {
 			const child: Cut<S, Data> | undefined = children?.[index];
 			if (child) {
 				// up to the edits of the child: before its first char, and the befores of wraps that end after it
-				const key = child.start * 4;
+				const key = child.start * 4 + Side.Before;
 				const wider = -child.end;
 				for (; edit < count && (keys[edit]! < key || (keys[edit] === key && nests[edit]! < wider)); edit++) {
 					owners.push(own(owner, keys[edit]!, nests[edit]!));
@@ -639,7 +673,7 @@ function own<S extends Source, Data>(owner: Cut<S, Data> | undefined, key: numbe
 		if (side === Side.Before && -nest > owner.end) {
 			throw new RangeError(`The wrap ${key >> 2}..${-nest} crosses ${nameCut(owner).toLowerCase()}.`);
 		}
-		if (side === Side.After && -nest < owner.start) {
+		if (side === Side.After && nest <= 0 && -nest < owner.start) {
 			throw new RangeError(`The wrap ${-nest}..${(key >> 2) + 1} crosses ${nameCut(owner).toLowerCase()}.`);
 		}
 	}

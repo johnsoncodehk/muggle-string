@@ -118,7 +118,7 @@ function defineProps(text: string, statement = 'const') {
 	const body = view(rewrite);
 	const typeArg = { start: text.indexOf('{'), end: text.lastIndexOf('}') + 1 };
 	const alias = rewrite.cut(typeArg.start, typeArg.end, { data: 'alias', placeholder: '__VLS_Props' });
-	rewrite.wrap(text.indexOf(statement), text.length, ['type __VLS_Props = ', alias, ';\n'], '');
+	rewrite.insertBefore(text.indexOf(statement), ['type __VLS_Props = ', alias, ';\n']);
 	return { rewrite, body, typeArg };
 }
 
@@ -130,8 +130,8 @@ describe('scenarios', () => {
 
 	test('code of a range before a moved range stays at its origin', () => {
 		const { rewrite, body, typeArg } = defineProps('const props = defineProps<{ a: string }>();');
-		rewrite.wrap(typeArg.start - 1, typeArg.start, '', '/* a */');
-		rewrite.wrap(typeArg.start - 1, typeArg.start, '', '/* b */');
+		rewrite.insertAfter(typeArg.start, '/* a */');
+		rewrite.insertAfter(typeArg.start, '/* b */');
 		expect(render(body)).toBe(
 			'type __VLS_Props = { a: string };\nconst props = defineProps</* a *//* b */__VLS_Props>();',
 		);
@@ -187,8 +187,8 @@ describe('scenarios', () => {
 		const importEnd = text.indexOf('\n') + 1;
 		const imports = view(rewrite, 'imports', 0, importEnd);
 		const body = view(rewrite, 'body', importEnd);
-		rewrite.wrap(0, importEnd, '', '/*end of imports*/');
-		rewrite.wrap(importEnd, text.length, '/*start of body*/', '');
+		rewrite.insertAfter(importEnd, '/*end of imports*/');
+		rewrite.insertBefore(importEnd, '/*start of body*/');
 		rewrite.replace(text.indexOf(`'a';`), text.indexOf('const') + 'const'.length, `'b'; let`);
 		expect([render(imports), render(body)]).toEqual([
 			`import { a } from 'b'; let/*end of imports*/`,
@@ -218,7 +218,7 @@ describe('scenarios', () => {
 		const rewrite = createRewrite(s, 'ab');
 		const body = view(rewrite);
 		const mapped = { source: otherSource, start: 3, end: 4, data: 'mapped', text: 'x' };
-		rewrite.wrap(0, 1, '', [mapped, [[''], 'y']]);
+		rewrite.insertAfter(1, [mapped, [[''], 'y']]);
 		const pieces = collect(body);
 		expect(pieces).toEqual([
 			{ source: s, start: 0, end: 1, data: 'body' },
@@ -231,7 +231,7 @@ describe('scenarios', () => {
 
 	test('a render passes every piece to the sink, a kept one without text', () => {
 		const rewrite = createRewrite(s, 'ab');
-		rewrite.wrap(1, 2, ['x', { source: otherSource, start: 0, end: 0, data: 'mapped', text: 'y' }], '');
+		rewrite.insertBefore(1, ['x', { source: otherSource, start: 0, end: 0, data: 'mapped', text: 'y' }]);
 		expect(collect(view(rewrite))).toStrictEqual([
 			{ source: s, start: 0, end: 1, data: 'body' },
 			'x',
@@ -247,7 +247,7 @@ describe('scenarios', () => {
 		const rewrite = createRewrite(s, 'abc');
 		rewrite.replace(0, 1, 'A');
 		const body = view(rewrite);
-		rewrite.wrap(1, 2, '', slice);
+		rewrite.insertAfter(2, slice);
 		expect(collect(body)).toEqual([
 			'A',
 			{ source: s, start: 1, end: 2, data: 'body' },
@@ -261,17 +261,92 @@ describe('scenarios', () => {
 	test('a slice is any code that renders, and renders through its own render', () => {
 		const rewrite = createRewrite(s, 'ab');
 		const body = view(rewrite);
-		rewrite.wrap(0, 1, '', [{ render: sink => sink('x') }, { render() {} }]);
+		rewrite.insertAfter(1, [{ render: sink => sink('x') }, { render() {} }]);
 		expect(render(body)).toBe('axb');
 	});
 
 	test('overlapping removals at the edges of a moved cut remove the chars of both cuts', () => {
 		const rewrite = createRewrite(s, 'abcdefgh');
 		const body = view(rewrite);
-		rewrite.wrap(0, 8, '', rewrite.cut(2, 6, { data: 'inner', placeholder: 'P' }));
+		rewrite.insertAfter(8, rewrite.cut(2, 6, { data: 'inner', placeholder: 'P' }));
 		rewrite.replace(1, 4, 'X');
 		rewrite.replace(3, 7, 'Y');
 		expect(render(body)).toBe('aXPhY');
+	});
+});
+
+describe('inserts', () => {
+	test('at one offset: afters of wraps that end there, insertAfter, insertBefore, befores of wraps that start there, whatever the order of the calls of different kinds', () => {
+		const edits = [
+			(rewrite: SourceRewrite<TestSource, TestData>) => rewrite.wrap(0, 1, '(', ')'),
+			(rewrite: SourceRewrite<TestSource, TestData>) => rewrite.wrap(1, 2, '[', ']'),
+			(rewrite: SourceRewrite<TestSource, TestData>) => rewrite.insertAfter(1, 'A'),
+			(rewrite: SourceRewrite<TestSource, TestData>) => rewrite.insertBefore(1, 'B'),
+			(rewrite: SourceRewrite<TestSource, TestData>) => rewrite.replace(1, 1, 'R'),
+		];
+		const random = createRandom(5);
+		for (let iteration = 0; iteration < 50; iteration++) {
+			const rewrite = createRewrite(s, 'ab');
+			for (const edit of edits.map(edit => ({ edit, key: random(100) })).sort((a, b) => a.key - b.key)) {
+				edit.edit(rewrite);
+			}
+			expect(render(view(rewrite))).toBe('(a)AB[Rb]');
+		}
+	});
+
+	test('a wrap is not two inserts: wraps nest by their ranges, while two inserts per range nest by call order', () => {
+		const wraps = createRewrite(s, 'ab');
+		wraps.wrap(0, 1, '[', ']');
+		wraps.wrap(0, 2, '(', ')');
+		expect(render(view(wraps))).toBe('([a]b)');
+		const inserts = createRewrite(s, 'ab');
+		inserts.insertBefore(0, '[');
+		inserts.insertAfter(1, ']');
+		inserts.insertBefore(0, '(');
+		inserts.insertAfter(2, ')');
+		expect(render(view(inserts))).toBe('[(a]b)');
+	});
+
+	test('inserts at one offset of one kind keep call order', () => {
+		const rewrite = createRewrite(s, 'ab');
+		rewrite.insertBefore(1, 'B1');
+		rewrite.insertAfter(1, 'A1');
+		rewrite.insertBefore(1, 'B2');
+		rewrite.insertAfter(1, 'A2');
+		expect(render(view(rewrite))).toBe('aA1A2B1B2b');
+	});
+
+	test('an insert inside the range of a wrap is inside it', () => {
+		const rewrite = createRewrite(s, 'abc');
+		rewrite.insertBefore(1, 'B');
+		rewrite.insertAfter(2, 'A');
+		rewrite.wrap(0, 3, '(', ')');
+		expect(render(view(rewrite))).toBe('(aBbAc)');
+	});
+
+	test('insertAfter renders with the char before its offset and insertBefore with the char at it, at the edges before and after all text', () => {
+		const rewrite = createRewrite(s, 'ab');
+		rewrite.insertAfter(0, 'H');
+		rewrite.insertBefore(0, 'S');
+		rewrite.insertAfter(1, 'A');
+		rewrite.insertBefore(1, 'B');
+		rewrite.insertAfter(2, 'E');
+		rewrite.insertBefore(2, 'T');
+		rewrite.wrap(0, 2, '(', ')');
+		const views = [[0, 2], [0, 1], [1, 2], [0, 0], [1, 1], [2, 2]] as const;
+		expect(views.map(([start, end]) => render(view(rewrite, 'v', start, end)))).toEqual([
+			'HS(aABb)ET',
+			'HS(aA',
+			'Bb)ET',
+			'H',
+			'',
+			'T',
+		]);
+		const empty = createRewrite(s, '');
+		empty.insertBefore(0, 'B');
+		empty.insertAfter(0, 'A');
+		empty.replace(0, 0, 'x');
+		expect(render(view(empty))).toBe('ABx');
 	});
 });
 
@@ -504,7 +579,7 @@ describe('runs', () => {
 		const unplaced = rewrite.cut(2, 4, { data: 'unplaced' });
 		rewrite.wrap(0, 1, 'x', '');
 		rewrite.wrap(3, 4, 'y', '');
-		rewrite.wrap(1, 6, '', ['z', placed]);
+		rewrite.insertAfter(6, ['z', placed]);
 		expect(rewrite.unrendered()).toEqual([placed, unplaced]);
 		expect(render(body)).toBe('befzxa');
 		expect(rewrite.unrendered()).toEqual([unplaced]);
@@ -518,8 +593,19 @@ describe('runs', () => {
 		const outer = rewrite.cut(1, 5, { data: 'outer', placeholder: 'O' });
 		const inner = rewrite.cut(2, 3, { data: 'inner', placeholder: 'I' });
 		rewrite.wrap(2, 3, '', ['[', outer, ']']);
-		rewrite.wrap(0, 6, '', ['{', inner, '}']);
+		rewrite.insertBefore(6, ['{', inner, '}']);
 		expect(render(body)).toBe('aOf{c[bIde]}');
+	});
+
+	test('inserts at the edges of a cut stay where the cut was, and inside it move with it', () => {
+		const rewrite = createRewrite(s, 'abcdef');
+		const body = view(rewrite);
+		const moved = rewrite.cut(1, 4, { data: 'moved', placeholder: 'P' });
+		rewrite.insertBefore(1, ['<', moved]);
+		rewrite.insertAfter(4, '>');
+		rewrite.insertBefore(2, '(');
+		rewrite.insertAfter(3, ')');
+		expect(render(body)).toBe('a<b(c)dP>ef');
 	});
 });
 
@@ -529,7 +615,7 @@ describe('construction errors', () => {
 		const a = rewrite.cut(0, 1, { data: 'a', placeholder: '<a>' });
 		const c = rewrite.cut(3, 4, { data: 'c', placeholder: '<c>' });
 		const b = rewrite.cut(2, 5, { data: 'b', placeholder: '<b>' });
-		rewrite.wrap(0, 7, '', [a, b, c]);
+		rewrite.insertBefore(7, [a, b, c]);
 		expect(render(view(rewrite))).toBe('<a>b<b>fgac<c>ed');
 	});
 
@@ -623,8 +709,8 @@ describe('construction errors', () => {
 
 		const twice = createRewrite(s, 'abc');
 		const moved = twice.cut(1, 2, { data: 'moved' });
-		twice.wrap(0, 1, moved, '');
-		twice.wrap(2, 3, '', moved);
+		twice.insertBefore(0, moved);
+		twice.insertAfter(3, moved);
 		expect([render(view(twice)), render(view(twice))]).toEqual(['bacb', 'bacb']);
 		expect(twice.unrendered()).toEqual([]);
 	});
@@ -672,6 +758,8 @@ describe('construction errors', () => {
 
 	test('ranges out of the text are errors', () => {
 		const rewrite = createRewrite(s, 'abc');
+		expect(() => rewrite.insertBefore(4, 'x')).toThrow('The offset 4 is out of 0..3.');
+		expect(() => rewrite.insertAfter(-1, 'x')).toThrow('The offset -1 is out of 0..3.');
 		expect(() => rewrite.wrap(4, 4, 'x', '')).toThrow('The offset 4 is out of 0..3.');
 		expect(() => rewrite.wrap(1, 4, '(', ')')).toThrow('The range 1..4 is out of 0..3.');
 		expect(() => rewrite.replace(2, 1, 'x')).toThrow('The range 2..1 is out of 0..3.');
@@ -714,9 +802,16 @@ describe('properties', () => {
 				const tag = `#${tags.length}`;
 				let start = random(length + 1);
 				let end = start + random(length - start + 1);
-				if (random(3) === 0) {
+				const kind = random(5);
+				if (kind === 0) {
 					rewrite.replace(start, end, tag);
 					removals.push([start, end]);
+				}
+				else if (kind === 1) {
+					rewrite.insertBefore(start, tag);
+				}
+				else if (kind === 2) {
+					rewrite.insertAfter(end, tag);
 				}
 				else {
 					// around the moved range or outside it
@@ -768,8 +863,14 @@ describe('properties', () => {
 			const whole = testCase.edits.filter(edit => edit.kind === 'wrap' && edit.start === 0 && edit.end === length);
 			// a cut of the whole text holds the wraps of it
 			if (whole.length && !testCase.cuts.some(cut => cut.start === 0 && cut.end === length)) {
-				expect(text.startsWith(`(${whole.at(-1)!.tag}`)).toBe(true);
-				// an empty range at the end of the text renders after the last char and its code
+				// inserts at 0 are outside the wraps that start there
+				const inserts = testCase.edits.filter(edit => edit.kind.startsWith('insert'));
+				const head = [
+					...inserts.filter(edit => edit.kind === 'insertAfter' && edit.start === 0),
+					...inserts.filter(edit => edit.kind === 'insertBefore' && edit.start === 0),
+				].map(edit => edit.tag).join('');
+				expect(text.startsWith(`${head}(${whole.at(-1)!.tag}`)).toBe(true);
+				// inserts and empty ranges at the end of the text render after the last char and its code
 				if (!testCase.edits.some(edit => edit.start === length && edit.end === length)) {
 					expect(text.endsWith(`)${whole.at(-1)!.tag}`)).toBe(true);
 				}
@@ -802,7 +903,7 @@ interface NestedCut {
 }
 
 interface NestedEdit {
-	kind: 'wrap' | 'replace';
+	kind: 'wrap' | 'replace' | 'insertBefore' | 'insertAfter';
 	start: number;
 	end: number;
 	tag: string;
@@ -869,10 +970,17 @@ function createNestedCase(random: (below: number) => number, length: number) {
 	for (let count = random(8); count > 0; count--) {
 		const start = random(length + 1);
 		const end = start + random(length - start + 1);
-		if (random(3) === 0) {
+		const kind = random(5);
+		if (kind === 0) {
 			if (start < end) {
 				edits.push({ kind: 'replace', start, end, tag: `#${edits.length}` });
 			}
+		}
+		else if (kind === 1) {
+			edits.push({ kind: 'insertBefore', start, end: start, tag: `#${edits.length}` });
+		}
+		else if (kind === 2) {
+			edits.push({ kind: 'insertAfter', start: end, end, tag: `#${edits.length}` });
 		}
 		else if (!crosses(start, end)) {
 			edits.push({ kind: 'wrap', start, end, tag: `#${edits.length}` });
@@ -913,6 +1021,12 @@ function buildNestedCase(
 	for (const edit of edits) {
 		if (edit.kind === 'replace') {
 			rewrite.replace(edit.start, edit.end, edit.tag);
+		}
+		else if (edit.kind === 'insertBefore') {
+			rewrite.insertBefore(edit.start, edit.tag);
+		}
+		else if (edit.kind === 'insertAfter') {
+			rewrite.insertAfter(edit.end, edit.tag);
 		}
 		else {
 			rewrite.wrap(edit.start, edit.end, `(${edit.tag}`, `)${edit.tag}`);
