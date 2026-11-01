@@ -204,6 +204,21 @@ console.log(JSON.stringify(map));
 
 `renderWithSourceMap(render, sourceName)` passes a sink to `render`, and `sourceName` gives the entry of each source in `sources`. Where the global `TextDecoder` is not defined, the first call throws before it renders.
 
+A range that has no source, or whose offsets are not integers within the content of its source, throws when it reaches the sink:
+
+```ts
+import { renderWithSourceMap } from 'muggle-string';
+
+const source = { name: 'main.js', content: 'a = 1;\n' };
+try {
+	renderWithSourceMap(sink => sink({ source, start: 0, end: 9, text: 'b' }), (from: typeof source) => from.name);
+}
+catch (error) {
+	console.log((error as Error).message);
+}
+// The range 0..9 of main.js is out of 0..7.
+```
+
 ## Coming from a mutable string editor
 
 Offsets always point into the original text, also after other edits.
@@ -225,6 +240,7 @@ Offsets always point into the original text, also after other edits.
 
 - `insertBefore(offset, code)` attaches code to the char at `offset`, and `insertAfter(offset, code)` to the char before it. The code moves with that char.
 - `replace(start, end, code)` removes `start`..`end` and puts `code` in its place. An empty range throws.
+- Offsets of edits, cuts and views that are not integers in 0..the length of the content throw.
 - `rewrite.writer(rank)` gives a writer with its own rank. At one position, code of a higher rank goes outside code of a lower rank. The rewrite itself is the outermost writer. Code of one writer at one position keeps call order.
 - `rewrite.cut(start, end, options)` takes a range out and returns a slice. The slice renders the range, with every edit inside it, where you place it. `options.placeholder` renders where the range was.
 - Cuts can be made in any order. A cut inside another moves with it. A cut that crosses another throws, naming both ranges.
@@ -250,6 +266,7 @@ type Piece<Origin = unknown> = string | (Origin & { start: number; end: number; 
 - A string is new text.
 - A range without `text` keeps the source text at `start`..`end`.
 - A range with `text` is generated text that stands for `start`..`end`.
+- `start` and `end` are integers, with 0 ≤ `start` ≤ `end` ≤ the length of the `content` of the source. `renderWithSourceMap` throws on a range that breaks this or has no source, when the range reaches its sink. `rewritePieceText` throws on such a range without `text`, as it reads the source only for kept text. A rewrite checks the offsets of its own edits, cuts and views when you call them, and passes the ranges you write as code on as they are.
 
 The ranges of a rewrite also carry their `source` and the fields of `Data`. Kept text gets the `data` passed to `render` or `cut`. The ranges you write carry what you put on them, like `name` in the source map example. `rewritePieceText(piece)` gives the text of any piece. A producer of one source, such as [muggle-pug](https://github.com/johnsoncodehk/muggle-pug), can emit plain `Piece` ranges without a `source`.
 

@@ -38,6 +38,9 @@ const enum CharClass {
  * ends the mapping before it. The `name` of a range with `text` is the original name of the symbol that its generated
  * text starts with, as of a symbol that `text` renames; it goes in `names`, for the first segment of the range on a
  * char. Kept text is its own name, so the `name` of a range without `text` goes nowhere.
+ *
+ * A range without a source, an object with a string `content`, or whose `start` and `end` are not integers with
+ * 0 <= `start` <= `end` <= the length of the content, throws when it reaches the sink.
  */
 export function renderWithSourceMap<S extends Source>(
 	render: (sink: (piece: Piece<{ source: S; name?: string }>) => void) => void,
@@ -45,7 +48,7 @@ export function renderWithSourceMap<S extends Source>(
 ): { text: string; map: SourceMap } {
 	// before the render, which may render slices that render only once
 	const latin1 = decoder ??= createDecoder();
-	const sources = new Map<S, { index: number; lineStarts: number[] }>();
+	const sources = new Map<S, { index: number; lineStarts: number[]; length: number }>();
 	const map: SourceMap = { version: 3, sources: [], sourcesContent: [], names: [], mappings: '' };
 	let text = '';
 	const digits = base64Codes ??= Uint8Array.from(base64, char => char.charCodeAt(0));
@@ -131,15 +134,19 @@ export function renderWithSourceMap<S extends Source>(
 		}
 		column += code.length - lineStart;
 	};
-	const sourceOf = (source: S) => {
+	const sourceOf = (piece: Exclude<Piece<{ source: S }>, string>) => {
+		const { source } = piece;
 		let known = sources.get(source);
 		if (!known) {
-			const { content } = source;
+			const content = source?.content;
+			if (typeof content !== 'string') {
+				throw new TypeError(`The range ${piece.start}..${piece.end} has no source.`);
+			}
 			const lineStarts = [0];
 			for (let index = content.indexOf('\n'); index >= 0; index = content.indexOf('\n', index + 1)) {
 				lineStarts.push(index + 1);
 			}
-			known = { index: sources.size, lineStarts };
+			known = { index: sources.size, lineStarts, length: content.length };
 			sources.set(source, known);
 			map.sources.push(sourceName(source));
 			map.sourcesContent.push(content);
@@ -168,7 +175,12 @@ export function renderWithSourceMap<S extends Source>(
 			text += piece;
 			return;
 		}
-		const { index, lineStarts } = sourceOf(piece.source);
+		const { index, lineStarts, length: sourceLength } = sourceOf(piece);
+		const { start, end } = piece;
+		// `>>> 0` keeps only integers from 0 to 2 ** 32 - 1, beyond any string length
+		if (start >>> 0 !== start || end >>> 0 !== end || start > end || end > sourceLength) {
+			throw new RangeError(`The range ${start}..${end} of ${map.sources[index]} is out of 0..${sourceLength}.`);
+		}
 		pieceName = piece.text === undefined ? undefined : piece.name;
 		let line = 0;
 		let high = lineStarts.length - 1;

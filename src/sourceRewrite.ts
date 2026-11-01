@@ -109,9 +109,28 @@ export function createSourceRewrite<
 
 type Sink<S extends Source, Data> = (piece: Piece<RewriteOrigin<S, Data>>) => void;
 
-/** The generated text of `piece`: new text, the `text` of a range, or the content of its source that it keeps. */
+/**
+ * The generated text of `piece`: new text, the `text` of a range, or the content of its source that it keeps. A kept
+ * range without a source, or whose `start` and `end` are not integers with 0 <= `start` <= `end` <= the length of the
+ * content, throws.
+ */
 export function rewritePieceText(piece: Piece<{ source: Source }>): string {
-	return typeof piece === 'string' ? piece : piece.text ?? piece.source.content.slice(piece.start, piece.end);
+	if (typeof piece === 'string') {
+		return piece;
+	}
+	const { text } = piece;
+	if (text != null) {
+		return text;
+	}
+	const { start, end } = piece;
+	const content = piece.source?.content;
+	if (typeof content !== 'string') {
+		throw new TypeError(`The range ${start}..${end} has no source.`);
+	}
+	if (!isRange(start, end, content.length)) {
+		throw new RangeError(`The range ${start}..${end} is out of 0..${content.length}.`);
+	}
+	return content.slice(start, end);
 }
 
 const coreRank = 0x7fffffff;

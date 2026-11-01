@@ -270,6 +270,36 @@ describe('renderWithSourceMap', () => {
 		}
 	});
 
+	test('a range that is not an integer range of the content of its source, or that has no source, is an error', () => {
+		for (const [start, end] of [[-1, 2], [1.5, 2], [3, 2], [0, 22], [Number.NaN, 2], [0, Infinity]]) {
+			expect(() => render([{ source: main, start: start!, end: end! }])).toThrow(
+				`The range ${start}..${end} of main.js is out of 0..21.`,
+			);
+			expect(() => render(['new', { source: main, start: start!, end: end!, text: 'x' }])).toThrow(
+				`The range ${start}..${end} of main.js is out of 0..21.`,
+			);
+		}
+		expect(() => render([{ start: 0, end: 1 } as TestPiece])).toThrow('The range 0..1 has no source.');
+		expect(() => render([{ source: null, start: 0, end: 1, text: 'x' } as unknown as TestPiece])).toThrow(
+			'The range 0..1 has no source.',
+		);
+		expect(() => render([{ source: { name: 'empty' }, start: 0, end: 0 } as TestPiece])).toThrow(
+			'The range 0..0 has no source.',
+		);
+		expect(render([{ source: main, start: 21, end: 21 }, { source: main, start: 0, end: 21, text: '' }]).text).toBe('');
+	});
+
+	test('a range that a rewrite renders as written is checked by the map', () => {
+		const rewrite = createSourceRewrite(main);
+		rewrite.replace(0, 5, { source: main, start: 0, end: 50, text: 'let' });
+		rewrite.render(0, 21, () => {});
+		const again = createSourceRewrite(main);
+		again.replace(0, 5, { source: main, start: 0, end: 50, text: 'let' });
+		expect(() => renderWithSourceMap(sink => again.render(0, 21, sink), source => source.name)).toThrow(
+			'The range 0..50 of main.js is out of 0..21.',
+		);
+	});
+
 	test('the map of a rewrite render is the map of its pieces', () => {
 		const source: TestSource = { name: 'App.js', content: 'log(name);\nconst name = "Ada";\n' };
 		const rewrite = createSourceRewrite(source);

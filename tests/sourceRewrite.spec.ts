@@ -547,6 +547,23 @@ describe('construction errors', () => {
 		expect(() => rewrite.cut(1, 2, { data: 'late' })).toThrow('The rewrite is already rendered.');
 	});
 
+	test('the text of a kept range that is not an integer range of the content of its source, or has no source, is an error', () => {
+		const source = { content: 'abc' };
+		for (const [start, end] of [[-1, 2], [1.5, 2], [3, 2], [0, 4], [Number.NaN, 2]]) {
+			expect(() => rewritePieceText({ source, start: start!, end: end! })).toThrow(
+				`The range ${start}..${end} is out of 0..3.`,
+			);
+		}
+		expect(() => rewritePieceText({ start: 0, end: 1 } as Parameters<typeof rewritePieceText>[0])).toThrow(
+			'The range 0..1 has no source.',
+		);
+		expect(() => rewritePieceText({ source: {}, start: 0, end: 1 } as Parameters<typeof rewritePieceText>[0])).toThrow(
+			'The range 0..1 has no source.',
+		);
+		expect(rewritePieceText({ source, start: 0, end: 50, text: 'x' })).toBe('x');
+		expect(rewritePieceText({ source, start: 3, end: 3 })).toBe('');
+	});
+
 	test('offsets out of the text, an empty replace and an invalid rank are errors', () => {
 		const rewrite = createRewrite(s, 'abc');
 		expect(() => rewrite.insertBefore(4, 'x')).toThrow('The offset 4 is out of 0..3.');
