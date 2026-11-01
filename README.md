@@ -19,7 +19,7 @@ In vuejs/language-tools, plugins for props, emits, models, slots and refs all ed
 
 ## Install
 
-1.0 is on the `next` tag: `npm install muggle-string@next`. It ships as ES modules only. CommonJS code can `require` it on Node 20.19 and later, or 22.12 and later. `renderWithSourceMap` also needs the global `TextDecoder` of the WHATWG Encoding Standard, as Node and Bun define it.
+`npm install muggle-string`. It ships as ES modules only. CommonJS code can `require` it on Node 20.19 and later, or 22.12 and later. `renderWithSourceMap` also needs the global `TextDecoder` of the WHATWG Encoding Standard, as Node and Bun define it.
 
 ## Usage
 
