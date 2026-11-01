@@ -18,7 +18,8 @@ function makeContent(words) {
 }
 
 /**
- * `count` edits at distinct offsets 5 chars apart: 40% insertBefore, 40% insertAfter, 20% replace of 1 to 4 chars. In random order, or in source order, as a code generator makes them.
+ * `count` edits at distinct offsets 5 chars apart, from 4 writers: 40% insertBefore, 40% insertAfter, 20% replace of
+ * 1 to 4 chars. In random order, or in source order, as a code generator makes them.
  */
 function makeEdits(content, count, sorted) {
 	const next = random(7);
@@ -34,9 +35,8 @@ function makeEdits(content, count, sorted) {
 		used.add(slot);
 		const at = slot * 5 + 1;
 		const kind = next();
-		// unused, so the edits stay those of earlier results
-		next();
-		edits.push(kind < 0.4 ? [0, at, at] : kind < 0.8 ? [1, at, at] : [2, at, at + 1 + Math.floor(next() * 4)]);
+		const writer = Math.floor(next() * 4);
+		edits.push(kind < 0.4 ? [0, at, at, writer] : kind < 0.8 ? [1, at, at, writer] : [2, at, at + 1 + Math.floor(next() * 4), writer]);
 	}
 	if (sorted) {
 		edits.sort((a, b) => a[1] - b[1]);
@@ -46,15 +46,16 @@ function makeEdits(content, count, sorted) {
 
 function applyEdits(M, source, edits) {
 	const rewrite = M.createSourceRewrite(source);
-	for (const [kind, start, end] of edits) {
+	const writers = [rewrite, rewrite.writer(1), rewrite.writer(2), rewrite.writer(3)];
+	for (const [kind, start, end, writer] of edits) {
 		if (kind === 0) {
-			rewrite.insertBefore(start, 'a');
+			writers[writer].insertBefore(start, 'a');
 		}
 		else if (kind === 1) {
-			rewrite.insertAfter(start, 'b');
+			writers[writer].insertAfter(start, 'b');
 		}
 		else {
-			rewrite.replace(start, end, { source, start, end, text: 'x' });
+			writers[writer].replace(start, end, { source, start, end, text: 'x' });
 		}
 	}
 	return rewrite;

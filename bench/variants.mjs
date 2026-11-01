@@ -11,34 +11,27 @@ export const variants = [
 			{
 				file: 'sourceRewrite.ts',
 				find: `		const key = at * 4 + side;
-		if (size && (key < keys[size - 1]! || (key === keys[size - 1]! && compareNests(key, nests[size - 1]!, nest, -1) > 0))) {
+		if (size && key < keys[size - 1]!) {
 			this.sorted = false;
 		}
 		if (size === keys.length) {
 			keys = new Int32Array(size * 2);
 			keys.set(this.keys);
 			this.keys = keys;
-			nests = new Int32Array(size * 2);
-			nests.set(this.nests);
-			this.nests = nests;
 		}
 		keys[size] = key;
-		nests[size] = nest;
 		this.code.push(code);`,
 				replace: `		const key = at * 4 + side;
 		if (size === keys.length) {
 			keys = new Int32Array(size * 2);
 			keys.set(this.keys);
 			this.keys = keys;
-			nests = new Int32Array(size * 2);
-			nests.set(this.nests);
-			this.nests = nests;
 		}
 		let low = 0;
 		let high = size;
 		while (low < high) {
 			const mid = (low + high) >>> 1;
-			if (keys[mid]! < key || (keys[mid] === key && compareNests(key, nests[mid]!, nest, -1) < 0)) {
+			if (keys[mid]! <= key) {
 				low = mid + 1;
 			}
 			else {
@@ -46,9 +39,7 @@ export const variants = [
 			}
 		}
 		keys.copyWithin(low + 1, low, size);
-		nests.copyWithin(low + 1, low, size);
 		keys[low] = key;
-		nests[low] = nest;
 		this.code.splice(low, 0, code);`,
 			},
 			{
@@ -134,50 +125,42 @@ export const variants = [
 			},
 			{
 				file: 'sourceRewrite.ts',
-				find: `	nests = new Int32Array(16);`,
-				replace: `	nests: number[] = [];`,
-			},
-			{
-				file: 'sourceRewrite.ts',
 				find: `		let keys = this.keys;
-		let nests = this.nests;
 		const size = this.code.length;
 		const key = at * 4 + side;
-		if (size && (key < keys[size - 1]! || (key === keys[size - 1]! && compareNests(key, nests[size - 1]!, nest, -1) > 0))) {
+		if (size && key < keys[size - 1]!) {
 			this.sorted = false;
 		}
 		if (size === keys.length) {
 			keys = new Int32Array(size * 2);
 			keys.set(this.keys);
 			this.keys = keys;
-			nests = new Int32Array(size * 2);
-			nests.set(this.nests);
-			this.nests = nests;
 		}
 		keys[size] = key;
-		nests[size] = nest;
 		this.code.push(code);`,
-				replace: `		const { keys, nests } = this;
+				replace: `		const keys = this.keys;
 		const size = this.code.length;
 		const key = at * 4 + side;
-		if (size && (key < keys[size - 1]! || (key === keys[size - 1]! && compareNests(key, nests[size - 1]!, nest, -1) > 0))) {
+		if (size && key < keys[size - 1]!) {
 			this.sorted = false;
 		}
 		keys.push(key);
-		nests.push(nest);
 		this.code.push(code);`,
 			},
 			{
 				file: 'sourceRewrite.ts',
-				find: `		const sortedKeys = new Int32Array(size);
-		const sortedNests = new Int32Array(size);`,
-				replace: `		const sortedKeys: number[] = [];
-		const sortedNests: number[] = [];`,
+				find: `		const sortedKeys = new Int32Array(size);`,
+				replace: `		const sortedKeys: number[] = [];`,
 			},
 			{
 				file: 'sourceRewrite.ts',
 				find: `	removals = new Int32Array(16);`,
 				replace: `	removals: number[] = [];`,
+			},
+			{
+				file: 'sourceRewrite.ts',
+				find: `	keys: Int32Array = new Int32Array(0);`,
+				replace: `	keys: ArrayLike<number> = [];`,
 			},
 			{
 				file: 'sourceRewrite.ts',
@@ -195,6 +178,67 @@ export const variants = [
 				find: `			const copy = new Int32Array(2 * pairs);`,
 				replace: `			const copy: number[] = [];`,
 			},
+			{
+				file: 'sourceRewrite.ts',
+				find: `): [Int32Array, RewriteCode<S, Data>[], Int32Array[]?] {`,
+				replace: `): [ArrayLike<number>, RewriteCode<S, Data>[], Int32Array[]?] {`,
+			},
+			{
+				file: 'sourceRewrite.ts',
+				find: `[writers[0]!.keys, writers[0]!.code] : [new Int32Array(0), []];`,
+				replace: `[writers[0]!.keys, writers[0]!.code] : [[], []];`,
+			},
+			{
+				file: 'sourceRewrite.ts',
+				find: `	const keys = new Int32Array(total);`,
+				replace: `	const keys: number[] = [];`,
+			},
+		],
+	},
+	{
+		name: 'merge-by-sort',
+		technique: 'the writers merged in one pass, a run of one writer at a time',
+		without: 'the edits of all writers concatenated and sorted by key and rank',
+		targets: ['random 100000', 'ordered 100000'],
+		replacements: [
+			{
+				file: 'sourceRewrite.ts',
+				find: /^function mergeEdits<S extends Source, Data>\([\s\S]*?^}\n/m,
+				replace: `function mergeEdits<S extends Source, Data>(
+	writers: Edits<S, Data>[],
+): [Int32Array, RewriteCode<S, Data>[], Int32Array[]?] {
+	const order: [number, number][] = [];
+	for (let writer = 0; writer < writers.length; writer++) {
+		for (let index = 0; index < writers[writer]!.code.length; index++) {
+			order.push([writer, index]);
+		}
+	}
+	order.sort(([writerA, indexA], [writerB, indexB]) => {
+		const a = writers[writerA]!.keys[indexA]!;
+		const b = writers[writerB]!.keys[indexB]!;
+		if (a !== b) {
+			return a - b;
+		}
+		if (writerA === writerB) {
+			return indexA - indexB;
+		}
+		const rankA = writers[writerA]!.rank;
+		const rankB = writers[writerB]!.rank;
+		return (a & 3) === Side.Before ? rankB - rankA : rankA - rankB;
+	});
+	const keys = new Int32Array(order.length);
+	const merged: RewriteCode<S, Data>[] = [];
+	const positions = writers.map(edits => new Int32Array(edits.code.length));
+	for (let at = 0; at < order.length; at++) {
+		const [writer, index] = order[at]!;
+		keys[at] = writers[writer]!.keys[index]!;
+		merged.push(writers[writer]!.code[index]!);
+		positions[writer]![index] = at;
+	}
+	return [keys, merged, positions];
+}
+`,
+			},
 		],
 	},
 	{
@@ -205,24 +249,21 @@ export const variants = [
 		replacements: [
 			{
 				file: 'sourceRewrite.ts',
-				find: /^\t\tlet index = 0;\n\t\tlet high = roots\.length;[\s\S]*?(?=^\t\tthis\.rendering\+\+;)/m,
+				find: /^\t\tlet index = 0;\n\t\tlet high = roots\.length;[\s\S]*?(?=^\t\trenderDepth\+\+;)/m,
 				replace: `		let index = 0;
 		while (index < roots.length && roots[index]!.end <= start) {
 			index++;
 		}
 		let pos = start;
-		let edit = 0;
-		// a view skips the cut that it starts inside, but for the afters of the wraps around it at its last char
+		// a view skips the cut that it starts inside
 		const first = roots[index];
 		if (first && first.start < start) {
 			pos = first.end < end ? first.end : end;
-			edit = first.endEdit;
 			index++;
 		}
-		else {
-			while (edit < this.edits.code.length && keys[edit]! < pos * 4) {
-				edit++;
-			}
+		let edit = 0;
+		while (edit < this.code.length && keys[edit]! < pos * 4) {
+			edit++;
 		}
 		let removal = 0;
 		while (removal < this.removalsSize >> 1 && removals[2 * removal + 1]! <= pos) {
