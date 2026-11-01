@@ -530,39 +530,19 @@ class Rewrite<Source extends RewriteSource, Data> {
 		}
 		/** The cuts that have renderers. */
 		const placed: Cut<Source, Data>[] = [];
-		/** The cuts placed in `code`, which `renderer` renders; a view is no renderer. */
-		const place = (code: RewriteCode<Source, Data>, renderer: Cut<Source, Data>) => {
-			if (typeof code === 'string') {
-				return;
-			}
-			if (isCodeArray<Source, Data>(code)) {
-				for (let index = 0; index < code.length; index++) {
-					place(code[index]!, renderer);
-				}
-			}
-			else if (code instanceof Cut && code.rewrite === this) {
-				if (code.renderers) {
-					code.renderers.push(renderer);
-				}
-				else {
-					code.renderers = [renderer];
-					placed.push(code);
-				}
-			}
-		};
 		// by writer and in the order of each, which decides the cut that the error of a cycle names
 		for (let writer = 0; writer < writers.length; writer++) {
 			const edits = writers[writer]!;
 			for (let index = 0; index < edits.code.length; index++) {
 				const owner = owners[positions ? positions[writer]![index]! : index];
 				if (owner) {
-					place(edits.code[index]!, owner);
+					place(this, placed, edits.code[index]!, owner);
 				}
 			}
 		}
 		for (const cut of this.cuts) {
 			if (cut.placeholder !== undefined && cut.parent) {
-				place(cut.placeholder, cut.parent);
+				place(this, placed, cut.placeholder, cut.parent);
 			}
 		}
 		checkRenderers(placed);
@@ -662,6 +642,35 @@ function mergeEdits<Source extends RewriteSource, Data>(
 		}
 		while (edit < edits.code.length && edits.keys[edit]! < bound);
 		next[best] = edit;
+	}
+}
+
+/**
+ * Records the cuts of `rewrite` placed in `code` as rendered by `renderer`, and adds each to `placed` the first time;
+ * a view is no renderer. Not a closure in `compile`: a new closure at each freeze makes V8 deoptimize the call.
+ */
+function place<Source extends RewriteSource, Data>(
+	rewrite: Rewrite<Source, Data>,
+	placed: Cut<Source, Data>[],
+	code: RewriteCode<Source, Data>,
+	renderer: Cut<Source, Data>,
+) {
+	if (typeof code === 'string') {
+		return;
+	}
+	if (isCodeArray<Source, Data>(code)) {
+		for (let index = 0; index < code.length; index++) {
+			place(rewrite, placed, code[index]!, renderer);
+		}
+	}
+	else if (code instanceof Cut && code.rewrite === rewrite) {
+		if (code.renderers) {
+			code.renderers.push(renderer);
+		}
+		else {
+			code.renderers = [renderer];
+			placed.push(code);
+		}
 	}
 }
 
