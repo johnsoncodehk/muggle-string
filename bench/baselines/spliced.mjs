@@ -1,9 +1,10 @@
 // The obvious first version of the rewrite: one array of edits, kept sorted by splicing each edit into its place,
-// and a sorted array of removals. It has the wraps and replaces of the rewrite, but no cuts or views.
+// and a sorted array of removals. It has the inserts, wraps and replaces of the rewrite, but no cuts or views.
 
-const Before = 0;
-const Slot = 1;
-const After = 2;
+const Point = 0;
+const Before = 1;
+const Slot = 2;
+const After = 3;
 
 export function createSourceRewrite(source) {
 	const edits = [];
@@ -29,6 +30,12 @@ export function createSourceRewrite(source) {
 		edits.splice(low, 0, edit);
 	};
 	return {
+		insertBefore(offset, code) {
+			add(offset, Point, 0, code);
+		},
+		insertAfter(offset, code) {
+			add(offset - 1, After, 1, code);
+		},
 		wrap(start, end, before, after) {
 			if (start === end) {
 				if (before !== '') {

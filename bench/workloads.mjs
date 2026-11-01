@@ -18,8 +18,7 @@ function makeContent(words) {
 }
 
 /**
- * `count` edits at distinct offsets 5 chars apart: 40% code before a char, 40% code after a char, 20% replace of 1 to
- * 4 chars. In random order, or in source order, as a code generator makes them.
+ * `count` edits at distinct offsets 5 chars apart: 40% insertBefore, 40% insertAfter, 20% replace of 1 to 4 chars. In random order, or in source order, as a code generator makes them.
  */
 function makeEdits(content, count, sorted) {
 	const next = random(7);
@@ -49,10 +48,10 @@ function applyEdits(M, source, edits) {
 	const rewrite = M.createSourceRewrite(source);
 	for (const [kind, start, end] of edits) {
 		if (kind === 0) {
-			rewrite.wrap(start, start + 1, 'a', '');
+			rewrite.insertBefore(start, 'a');
 		}
 		else if (kind === 1) {
-			rewrite.wrap(start - 1, start, '', 'b');
+			rewrite.insertAfter(start, 'b');
 		}
 		else {
 			rewrite.replace(start, end, { source, start, end, text: 'x' });
@@ -205,7 +204,7 @@ export const workloads = {
 						slices.push(rewrite.cut(index * block, index * block + (block >> 1)));
 					}
 					for (let index = size - 1; index >= 0; index--) {
-						rewrite.wrap(0, content.length, '', slices[index]);
+						rewrite.insertBefore(content.length, slices[index]);
 					}
 					return renderText(M, rewrite, content.length);
 				},
