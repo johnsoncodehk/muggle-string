@@ -1,3 +1,5 @@
 node_modules
 out
 tests/.readme
+bench/.build
+bench/.results

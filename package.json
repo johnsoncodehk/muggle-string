@@ -22,11 +22,13 @@
 	"scripts": {
 		"build": "tsc",
 		"prepare": "tsc",
-		"test": "vitest run"
+		"test": "vitest run",
+		"bench": "node bench/run.mjs"
 	},
 	"devDependencies": {
 		"@jridgewell/trace-mapping": "^0.3.31",
 		"@types/node": "^26.0.1",
+		"muggle-string-0.4": "npm:muggle-string@0.4.1",
 		"typescript": "7.1.0-beta",
 		"vitest": "latest"
 	}
