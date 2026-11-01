@@ -1,6 +1,6 @@
 import { originalPositionFor, TraceMap, traceSegment } from '@jridgewell/trace-mapping';
 import { SourceMap as NodeSourceMap } from 'node:module';
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import { createSourceRewrite, type Piece, renderWithSourceMap, rewritePieceText, type SourceMap } from '../src';
 
 interface TestSource {
@@ -226,6 +226,41 @@ describe('renderWithSourceMap', () => {
 			{ source: long, start: 4990, end: 5001, text: 'Z\n' },
 			{ source: long, start: 0, end: 4990 },
 		]);
+	});
+
+	test('mappings longer than a chunk of the encoder are whole', () => {
+		const long: TestSource = { name: 'long.js', content: 'ab c;\n'.repeat(4000) };
+		// Each start ends a chunk at another point of a segment.
+		for (let start = 0; start < 6; start++) {
+			const { map } = check([
+				{ source: long, start: 12000 + start, end: long.content.length },
+				{ source: long, start: 6000, end: 6003, text: 'x\ny', name: 'ab' },
+				'\n',
+				{ source: long, start: 0, end: 12000 },
+			]);
+			expect(map.mappings.length).toBeGreaterThan(65536);
+		}
+	});
+
+	test('mappings are the same where no TextDecoder is defined', async () => {
+		const pieces: TestPiece[] = [
+			{ source: main, start: 13, end: 21 },
+			{ source: main, start: 6, end: 7, text: 'b', name: 'a' },
+			{ source: main, start: 0, end: 13 },
+		];
+		const long: TestSource = { name: 'long.js', content: 'ab c;\n'.repeat(4000) };
+		const longPieces: TestPiece[] = [{ source: long, start: 0, end: long.content.length }];
+		vi.stubGlobal('TextDecoder', undefined);
+		vi.resetModules();
+		try {
+			const { renderWithSourceMap: withoutDecoder } = await import('../src/sourceMap');
+			for (const each of [pieces, longPieces]) {
+				expect(withoutDecoder<TestSource>(sink => each.forEach(sink), source => source.name)).toEqual(render(each));
+			}
+		}
+		finally {
+			vi.unstubAllGlobals();
+		}
 	});
 
 	test('the map of a rewrite render is the map of its pieces', () => {

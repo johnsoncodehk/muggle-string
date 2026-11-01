@@ -9,7 +9,11 @@ export interface SourceMap {
 	mappings: string;
 }
 
-const base64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+const base64 = Uint8Array.from('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/', char => char.charCodeAt(0));
+
+const comma = 44;
+const semicolon = 59;
+const chunkSize = 65536;
 
 const enum CharClass {
 	Space,
@@ -35,7 +39,9 @@ export function renderWithSourceMap<Source extends RewriteSource>(
 	const sources = new Map<Source, { index: number; lineStarts: number[] }>();
 	const map: SourceMap = { version: 3, sources: [], sourcesContent: [], names: [], mappings: '' };
 	let text = '';
-	let mappings = '';
+	const chunks: string[] = [];
+	const buffer = new Uint8Array(chunkSize);
+	let length = 0;
 	let column = 0;
 	let lineHasSegment = false;
 	let lineEndsMapped = false;
@@ -48,13 +54,39 @@ export function renderWithSourceMap<Source extends RewriteSource>(
 	let pieceName: string | undefined;
 	const names = new Map<string, number>();
 
-	const segment = (fields: string) => {
-		mappings += (lineHasSegment ? ',' : '') + encode(column - lastColumn) + fields;
+	const encode = (value: number) => {
+		let rest = value < 0 ? (-value << 1) | 1 : value << 1;
+		do {
+			let digit = rest & 31;
+			rest >>>= 5;
+			if (rest) {
+				digit |= 32;
+			}
+			buffer[length++] = base64[digit]!;
+		}
+		while (rest);
+	};
+	// A segment takes at most a comma and five fields of 7 digits.
+	const reserve = () => {
+		if (length > chunkSize - 36) {
+			chunks.push(decode(buffer, length));
+			length = 0;
+		}
+	};
+	const segment = () => {
+		reserve();
+		if (lineHasSegment) {
+			buffer[length++] = comma;
+		}
+		encode(column - lastColumn);
 		lastColumn = column;
 		lineHasSegment = true;
 	};
 	const mapTo = (source: number, line: number, sourceColumn: number, named = true) => {
-		let fields = encode(source - lastSource) + encode(line - lastLine) + encode(sourceColumn - lastSourceColumn);
+		segment();
+		encode(source - lastSource);
+		encode(line - lastLine);
+		encode(sourceColumn - lastSourceColumn);
 		if (named && pieceName !== undefined) {
 			let known = names.get(pieceName);
 			if (known === undefined) {
@@ -62,11 +94,10 @@ export function renderWithSourceMap<Source extends RewriteSource>(
 				names.set(pieceName, known);
 				map.names.push(pieceName);
 			}
-			fields += encode(known - lastName);
+			encode(known - lastName);
 			lastName = known;
 			pieceName = undefined;
 		}
-		segment(fields);
 		lastSource = source;
 		lastLine = line;
 		lastSourceColumn = sourceColumn;
@@ -74,7 +105,8 @@ export function renderWithSourceMap<Source extends RewriteSource>(
 		endsWithoutSource = false;
 	};
 	const newLine = () => {
-		mappings += ';';
+		reserve();
+		buffer[length++] = semicolon;
 		column = 0;
 		lastColumn = 0;
 		lineHasSegment = false;
@@ -112,7 +144,7 @@ export function renderWithSourceMap<Source extends RewriteSource>(
 				const lineEnd = piece.indexOf('\n', lineStart);
 				const end = lineEnd < 0 ? piece.length : lineEnd;
 				if (end > lineStart && (lineEndsMapped || !lineHasSegment)) {
-					segment('');
+					segment();
 					lineEndsMapped = false;
 					endsWithoutSource = true;
 				}
@@ -185,23 +217,26 @@ export function renderWithSourceMap<Source extends RewriteSource>(
 		pieceName = undefined;
 	});
 
+	chunks.push(decode(buffer, length));
+	const mappings = chunks.join('');
 	// Node reads a segment without a source that ends the mappings as one that keeps the source position before it
 	map.mappings = endsWithoutSource ? mappings + ';' : mappings;
 	return { text, map };
 }
 
-function encode(value: number) {
-	let rest = value < 0 ? (-value << 1) | 1 : value << 1;
-	let code = '';
-	do {
-		let digit = rest & 31;
-		rest >>>= 5;
-		if (rest) {
-			digit |= 32;
-		}
-		code += base64[digit];
+declare const TextDecoder: (new(label: string) => { decode(input: Uint8Array): string }) | undefined;
+
+const decoder = typeof TextDecoder === 'function' ? new TextDecoder('latin1') : undefined;
+
+/** The ASCII text of the first `length` bytes of `bytes`. */
+function decode(bytes: Uint8Array, length: number) {
+	if (decoder) {
+		return decoder.decode(bytes.subarray(0, length));
 	}
-	while (rest);
+	let code = '';
+	for (let start = 0; start < length; start += 4096) {
+		code += String.fromCharCode(...bytes.subarray(start, Math.min(length, start + 4096)));
+	}
 	return code;
 }
 
