@@ -8,7 +8,6 @@ import {
 	type RewriteCode,
 	type RewriteOrigin,
 	type RewriteSlice,
-	type RewriteWriter,
 	rewritePieceText,
 	type SourceRewrite,
 } from '../src';
@@ -37,10 +36,10 @@ function createRewrite(name: string, content: string) {
 	return createSourceRewrite<TestSource, TestData>({ name, content });
 }
 
-/** The pieces of `slice`, as the render passes them. */
+/** The pieces of `slice`, as the render passes them, kept text by default with the data `self`. */
 function renderPieces(slice: RewriteSlice<TestSource, TestData>) {
 	const pieces: TestPiece[] = [];
-	slice.render(piece => pieces.push(piece));
+	slice.render(piece => pieces.push(piece), { data: 'self' });
 	return pieces;
 }
 
@@ -119,7 +118,7 @@ function defineProps(text: string, statement = 'const') {
 	const body = view(rewrite);
 	const typeArg = { start: text.indexOf('{'), end: text.lastIndexOf('}') + 1 };
 	const alias = rewrite.cut(typeArg.start, typeArg.end, { data: 'alias', placeholder: '__VLS_Props' });
-	rewrite.insertBefore(text.indexOf(statement), ['type __VLS_Props = ', alias, ';\n']);
+	rewrite.wrap(text.indexOf(statement), text.length, ['type __VLS_Props = ', alias, ';\n'], '');
 	return { rewrite, body, typeArg };
 }
 
@@ -129,20 +128,18 @@ describe('scenarios', () => {
 		expect(render(body)).toBe('type __VLS_Props = { a: string };\nconst props = defineProps<__VLS_Props>();');
 	});
 
-	test('an insert after the start of a moved range stays at its origin', () => {
+	test('code of a range before a moved range stays at its origin', () => {
 		const { rewrite, body, typeArg } = defineProps('const props = defineProps<{ a: string }>();');
-		const plugin = rewrite.writer(1);
-		plugin.insertAfter(typeArg.start, '/* a */');
-		plugin.insertAfter(typeArg.start, '/* b */');
+		rewrite.wrap(typeArg.start - 1, typeArg.start, '', '/* a */');
+		rewrite.wrap(typeArg.start - 1, typeArg.start, '', '/* b */');
 		expect(render(body)).toBe(
 			'type __VLS_Props = { a: string };\nconst props = defineProps</* a *//* b */__VLS_Props>();',
 		);
 	});
 
-	test('inserts on the inner sides of a moved range travel with it', () => {
+	test('a wrap of a moved range travels with it', () => {
 		const { rewrite, body, typeArg } = defineProps('const props = defineProps<{ a: string }>();');
-		rewrite.writer(1).insertBefore(typeArg.start, 'Wrap<');
-		rewrite.writer(1).insertAfter(typeArg.end, '>');
+		rewrite.wrap(typeArg.start, typeArg.end, 'Wrap<', '>');
 		expect(render(body)).toBe('type __VLS_Props = Wrap<{ a: string }>;\nconst props = defineProps<__VLS_Props>();');
 	});
 
@@ -150,78 +147,59 @@ describe('scenarios', () => {
 		const text = 'const props = defineProps<{ a: string }>();';
 		const { rewrite, body } = defineProps(text);
 		const start = text.indexOf('string');
-		rewrite.writer(1).replace(start, start + 'string'.length, 'number');
+		rewrite.replace(start, start + 'string'.length, 'number');
 		const segments = renderPieces(body);
 		expect(toText(segments)).toBe('type __VLS_Props = { a: number };\nconst props = defineProps<__VLS_Props>();');
 		renderedOffsets(rewrite, segments);
 	});
 
-	test('nested replaces of two writers keep both codes at their own starts, whatever the ranks', () => {
+	test('nested replaces keep both codes at their own starts, whatever the order of the calls', () => {
 		const text = 'const a = useFoo();';
 		const call = text.indexOf('useFoo()');
 		const name = text.indexOf('Foo');
 		const edits = [
-			(writer: RewriteWriter<TestSource, TestData>) => writer.replace(call, call + 'useFoo()'.length, 'first()'),
-			(writer: RewriteWriter<TestSource, TestData>) => writer.replace(name, name + 'Foo'.length, 'Second'),
+			(rewrite: SourceRewrite<TestSource, TestData>) => rewrite.replace(call, call + 'useFoo()'.length, 'first()'),
+			(rewrite: SourceRewrite<TestSource, TestData>) => rewrite.replace(name, name + 'Foo'.length, 'Second'),
 		];
 		for (const order of [[0, 1], [1, 0]]) {
 			const rewrite = createRewrite(s, text);
 			const body = view(rewrite);
-			order.forEach((edit, rank) => edits[edit]!(rewrite.writer(rank + 1)));
+			for (const edit of order) {
+				edits[edit]!(rewrite);
+			}
 			expect(render(body)).toBe('const a = first()Second;');
 		}
 	});
 
-	test('replaces of one range by two writers keep both codes, inner rank first', () => {
+	test('replaces of one range keep both codes, in call order', () => {
 		const text = 'const a = useFoo();';
 		const rewrite = createRewrite(s, text);
 		const body = view(rewrite);
 		const call = text.indexOf('useFoo()');
-		rewrite.writer(1).replace(call, call + 8, 'A()');
-		rewrite.writer(2).replace(call, call + 8, 'B()');
+		rewrite.replace(call, call + 8, 'A()');
+		rewrite.replace(call, call + 8, 'B()');
 		expect(render(body)).toBe('const a = A()B();');
 	});
 
-	test('wraps of two writers nest, the lower rank inside', () => {
-		const rewrite = createRewrite(s, 'x = f();');
-		const body = view(rewrite);
-		rewrite.writer(1).insertBefore(4, 'A(');
-		rewrite.writer(1).insertAfter(7, ')');
-		rewrite.writer(2).insertBefore(4, 'B(');
-		rewrite.writer(2).insertAfter(7, ')');
-		expect(render(body)).toBe('x = B(A(f()));');
-	});
-
-	test('an insert at a boundary of two views goes by its side, and a removal across them splits', () => {
+	test('code at a boundary of two views renders with the range it belongs to, and a removal across them splits', () => {
 		const text = `import { a } from 'a';\nconst b = a;`;
 		const rewrite = createRewrite(s, text);
 		const importEnd = text.indexOf('\n') + 1;
 		const imports = view(rewrite, 'imports', 0, importEnd);
 		const body = view(rewrite, 'body', importEnd);
-		const plugin = rewrite.writer(1);
-		plugin.insertAfter(importEnd, '/*end of imports*/');
-		plugin.insertBefore(importEnd, '/*start of body*/');
-		plugin.replace(text.indexOf(`'a';`), text.indexOf('const') + 'const'.length, `'b'; let`);
+		rewrite.wrap(0, importEnd, '', '/*end of imports*/');
+		rewrite.wrap(importEnd, text.length, '/*start of body*/', '');
+		rewrite.replace(text.indexOf(`'a';`), text.indexOf('const') + 'const'.length, `'b'; let`);
 		expect([render(imports), render(body)]).toEqual([
 			`import { a } from 'b'; let/*end of imports*/`,
 			'/*start of body*/ b = a;',
 		]);
 	});
 
-	test('a replace of the first token of a statement keeps the insert of the rewrite before it', () => {
+	test('a replace of the first token of a statement goes inside the code before the statement', () => {
 		const { rewrite, body } = defineProps('const props = defineProps<{ a: string }>();');
-		rewrite.writer(1).replace(0, 5, 'let');
+		rewrite.replace(0, 5, 'let');
 		expect(render(body)).toBe('type __VLS_Props = { a: string };\nlet props = defineProps<__VLS_Props>();');
-	});
-
-	test('inserts of the rewrite sit outside the inserts of other writers', () => {
-		const rewrite = createRewrite(s, 'useAttrs();');
-		const body = view(rewrite);
-		rewrite.insertBefore(0, '(');
-		rewrite.insertAfter(10, ' as A)');
-		rewrite.writer(0).insertBefore(0, 'P(');
-		rewrite.writer(0).insertAfter(10, ')');
-		expect(render(body)).toBe('(P(useAttrs()) as A);');
 	});
 
 	test('a run maps with the data of the innermost cut that owns it', () => {
@@ -240,7 +218,7 @@ describe('scenarios', () => {
 		const rewrite = createRewrite(s, 'ab');
 		const body = view(rewrite);
 		const mapped = { source: otherSource, start: 3, end: 4, data: 'mapped', text: 'x' };
-		rewrite.insertAfter(1, [mapped, [[''], 'y']]);
+		rewrite.wrap(0, 1, '', [mapped, [[''], 'y']]);
 		const pieces = collect(body);
 		expect(pieces).toEqual([
 			{ source: s, start: 0, end: 1, data: 'body' },
@@ -253,7 +231,7 @@ describe('scenarios', () => {
 
 	test('a render passes every piece to the sink, a kept one without text', () => {
 		const rewrite = createRewrite(s, 'ab');
-		rewrite.insertBefore(1, ['x', { source: otherSource, start: 0, end: 0, data: 'mapped', text: 'y' }]);
+		rewrite.wrap(1, 2, ['x', { source: otherSource, start: 0, end: 0, data: 'mapped', text: 'y' }], '');
 		expect(collect(view(rewrite))).toStrictEqual([
 			{ source: s, start: 0, end: 1, data: 'body' },
 			'x',
@@ -264,12 +242,12 @@ describe('scenarios', () => {
 
 	test('a slice of another rewrite renders the text and edits of its own rewrite', () => {
 		const inner = createRewrite(other, 'xyz');
-		inner.writer(0).replace(1, 2, 'Y');
+		inner.replace(1, 2, 'Y');
 		const slice = inner.cut(0, 3, { data: 'inner' });
 		const rewrite = createRewrite(s, 'abc');
-		rewrite.writer(0).replace(0, 1, 'A');
+		rewrite.replace(0, 1, 'A');
 		const body = view(rewrite);
-		rewrite.insertAfter(2, slice);
+		rewrite.wrap(1, 2, '', slice);
 		expect(collect(body)).toEqual([
 			'A',
 			{ source: s, start: 1, end: 2, data: 'body' },
@@ -283,119 +261,234 @@ describe('scenarios', () => {
 	test('a slice is any code that renders, and renders through its own render', () => {
 		const rewrite = createRewrite(s, 'ab');
 		const body = view(rewrite);
-		rewrite.insertAfter(1, [{ render: sink => sink('x') }, { render() {} }]);
+		rewrite.wrap(0, 1, '', [{ render: sink => sink('x') }, { render() {} }]);
 		expect(render(body)).toBe('axb');
 	});
 
-	test('removals of two writers that overlap the edges of a moved cut remove the chars of both cuts', () => {
+	test('overlapping removals at the edges of a moved cut remove the chars of both cuts', () => {
 		const rewrite = createRewrite(s, 'abcdefgh');
 		const body = view(rewrite);
-		rewrite.insertAfter(8, rewrite.cut(2, 6, { data: 'inner', placeholder: 'P' }));
-		rewrite.writer(0).replace(1, 4, 'X');
-		rewrite.writer(1).replace(3, 7, 'Y');
+		rewrite.wrap(0, 8, '', rewrite.cut(2, 6, { data: 'inner', placeholder: 'P' }));
+		rewrite.replace(1, 4, 'X');
+		rewrite.replace(3, 7, 'Y');
 		expect(render(body)).toBe('aXPhY');
 	});
 });
 
-describe('order', () => {
-	test('the entries of one writer at one side of a char keep call order', () => {
-		const rewrite = createRewrite(s, 'abc');
-		const body = view(rewrite);
-		rewrite.insertAfter(1, 'A');
-		rewrite.insertBefore(2, 'B');
-		rewrite.insertAfter(1, 'C');
-		rewrite.insertBefore(2, 'D');
-		expect(render(body)).toBe('aACbBDc');
-	});
-
-	test('edits and removals of one writer that arrive out of order render in order, equal keys in call order', () => {
-		const rewrite = createRewrite(s, 'abcdef');
-		const body = view(rewrite);
-		const writer = rewrite.writer(0);
-		writer.insertAfter(4, 'A');
-		writer.replace(4, 5, 'R');
-		writer.insertBefore(1, 'B');
-		writer.insertAfter(4, 'C');
-		writer.replace(1, 2, 'S');
-		writer.insertBefore(1, 'D');
-		expect(render(body)).toBe('aBDScdACRf');
-	});
-
-	test('the order at a char: before by rank descending, replacement, the char, after by rank ascending', () => {
-		const rewrite = createRewrite(s, 'abc');
-		const body = view(rewrite);
-		for (const rank of [0, 1]) {
-			const writer = rewrite.writer(rank);
-			writer.insertBefore(1, `<${rank}`);
-			writer.insertAfter(2, `>${rank}`);
+describe('wraps', () => {
+	test('wraps nest by their ranges, whatever the order of the calls', () => {
+		for (const outerFirst of [true, false]) {
+			const rewrite = createRewrite(s, 'xyz');
+			const wraps = [
+				() => rewrite.wrap(0, 3, '(', ')'),
+				() => rewrite.wrap(1, 3, '[', ']'),
+				() => rewrite.wrap(0, 1, '{', '}'),
+			];
+			for (const wrap of outerFirst ? wraps : wraps.reverse()) {
+				wrap();
+			}
+			expect(render(view(rewrite))).toBe('({x}[yz])');
 		}
-		rewrite.writer(1).replace(1, 2, 'R1');
-		rewrite.writer(0).replace(1, 2, 'R0');
-		rewrite.insertBefore(1, '<c');
-		rewrite.insertAfter(2, '>c');
-		expect(render(body)).toBe('a<c<1<0R0R1>0>1>cc');
+	});
+
+	test('of one range, a later wrap goes outside, so befores render in reverse call order and afters in call order', () => {
+		const rewrite = createRewrite(s, 'x');
+		rewrite.wrap(0, 1, '(', ')');
+		rewrite.wrap(0, 1, '[', ']');
+		rewrite.wrap(0, 1, 'A', '');
+		rewrite.wrap(0, 1, '', 'B');
+		expect(render(view(rewrite))).toBe('A[(x)]B');
+	});
+
+	test('the order at a char: befores of wraps by end, the replacement, the char, afters of wraps by start', () => {
+		const rewrite = createRewrite(s, 'abc');
+		rewrite.wrap(1, 2, '<1', '>1');
+		rewrite.wrap(0, 2, '<0', '>0');
+		rewrite.wrap(1, 3, '<3', '>3');
+		rewrite.replace(1, 2, 'R');
+		expect(render(view(rewrite))).toBe('<0a<3<1R>1>0c>3');
+	});
+
+	test('edits that arrive out of order render in order', () => {
+		const rewrite = createRewrite(s, 'abcdef');
+		rewrite.wrap(3, 5, '', 'A');
+		rewrite.replace(4, 5, 'R');
+		rewrite.wrap(1, 2, 'B', '');
+		rewrite.wrap(3, 5, '', 'C');
+		rewrite.replace(1, 2, 'S');
+		rewrite.wrap(1, 2, 'D', '');
+		expect(render(view(rewrite))).toBe('aDBScdRACf');
+	});
+
+	test('a wrap renders its before with the first char of its range, and its after with the last', () => {
+		const rewrite = createRewrite(s, 'abcd');
+		rewrite.wrap(1, 3, '(', ')');
+		const views = [[0, 4], [1, 3], [0, 2], [2, 4], [1, 1], [3, 3]] as const;
+		expect(views.map(([start, end]) => render(view(rewrite, 'v', start, end)))).toEqual([
+			'a(bc)d',
+			'(bc)',
+			'a(b',
+			'c)d',
+			'',
+			'',
+		]);
+	});
+
+	test('an empty range is at the char at its offset, and at the end of the text after it', () => {
+		const rewrite = createRewrite(s, 'ab');
+		rewrite.replace(1, 1, 'R');
+		rewrite.wrap(1, 1, '[', ']');
+		rewrite.wrap(1, 1, '{', '}');
+		rewrite.wrap(1, 2, '(', ')');
+		rewrite.wrap(0, 1, '<', '>');
+		rewrite.replace(2, 2, 'E');
+		const views = [[0, 2], [0, 1], [1, 2], [1, 1], [2, 2]] as const;
+		expect(views.map(([start, end]) => render(view(rewrite, 'v', start, end)))).toEqual([
+			'<a>({[R]}b)E',
+			'<a>',
+			'({[R]}b)E',
+			'',
+			'E',
+		]);
+	});
+
+	test('an empty text has its code at its end', () => {
+		const rewrite = createRewrite(s, '');
+		rewrite.wrap(0, 0, 'A', 'B');
+		rewrite.replace(0, 0, 'x');
+		rewrite.wrap(0, 0, '(', ')');
+		expect(render(view(rewrite))).toBe('(AxB)');
+	});
+
+	test('a wrap moves with a cut of a range that holds it, and stays around a cut that it holds', () => {
+		const rewrite = createRewrite(s, 'abcdef');
+		rewrite.wrap(0, 6, '<', '>');
+		rewrite.wrap(1, 4, '[', ']');
+		rewrite.wrap(2, 4, '(', ')');
+		rewrite.wrap(3, 4, '{', '}');
+		rewrite.wrap(0, 6, '', rewrite.cut(2, 4));
+		expect(render(view(rewrite))).toBe('<a[b]ef>(c{d})');
+	});
+
+	test('random wraps nest, each around the text of its range', () => {
+		const random = createRandom(5);
+		for (let iteration = 0; iteration < 5000; iteration++) {
+			const length = 1 + random(10);
+			const rewrite = createRewrite(s, alphabet(length));
+			const wraps: { start: number; end: number; id: number }[] = [];
+			for (let count = random(8); count > 0; count--) {
+				const start = random(length + 1);
+				const end = start + random(length - start + 1);
+				const id = wraps.length;
+				wraps.push({ start, end, id });
+				rewrite.wrap(start, end, `(${id}`, `)${id}`);
+			}
+			const text = render(view(rewrite));
+			const stack: number[] = [];
+			const crossing = (a: typeof wraps[number], b: typeof wraps[number]) =>
+				a.start < b.start && b.start < a.end && a.end < b.end;
+			if (!wraps.some(a => wraps.some(b => crossing(a, b)))) {
+				for (const [, kind, id] of text.matchAll(/([()])(\d+)/g)) {
+					if (kind === '(') {
+						stack.push(Number(id));
+					}
+					else {
+						expect(stack.pop()).toBe(Number(id));
+					}
+				}
+				expect(stack).toEqual([]);
+			}
+			for (const { start, end, id } of wraps) {
+				const inside = text.slice(text.indexOf(`(${id}`), text.indexOf(`)${id}`));
+				expect(inside.replace(/[()]\d+/g, '')).toBe(alphabet(length).slice(start, end));
+			}
+		}
+	});
+
+	test('random wraps and replaces render the same whatever the order of the calls of different ranges', () => {
+		const random = createRandom(2);
+		for (let iteration = 0; iteration < 5000; iteration++) {
+			const length = 1 + random(10);
+			const edits = Array.from({ length: random(7) }, (_, index) => {
+				const start = random(length + 1);
+				const end = start + random(length - start + 1);
+				const replace = random(3) === 0 && start < end;
+				return {
+					range: replace ? `r${start}` : `${start}..${end}`,
+					apply: (rewrite: SourceRewrite<TestSource, TestData>) =>
+						replace
+							? rewrite.replace(start, end, `#${index}`)
+							: rewrite.wrap(start, end, `(${index}`, `)${index}`),
+				};
+			});
+			const renderEdits = (list: typeof edits) => {
+				const rewrite = createRewrite(s, alphabet(length));
+				for (const edit of list) {
+					edit.apply(rewrite);
+				}
+				return render(view(rewrite));
+			};
+			// a random order that keeps the order of the edits of one range
+			const shuffled = edits.map(edit => ({ edit, key: random(100) })).sort((a, b) => a.key - b.key).map(({ edit }) => edit);
+			const queues = new Map<string, typeof edits>();
+			for (const edit of edits) {
+				queues.set(edit.range, [...queues.get(edit.range) ?? [], edit]);
+			}
+			const reordered = shuffled.map(edit => queues.get(edit.range)!.shift()!);
+			expect(renderEdits(reordered)).toBe(renderEdits(edits));
+		}
 	});
 });
 
-describe('text edges', () => {
-	test('code at the end of the text stays after all text when a cut that ends there moves', () => {
-		const rewrite = createRewrite(s, 'abcdefgh');
-		const body = view(rewrite);
-		const last = rewrite.cut(5, 8, { data: 'last' });
-		rewrite.insertAfter(0, last);
-		rewrite.insertBefore(8, 'X');
-		rewrite.insertAfter(8, 'Y');
-		expect(render(body)).toBe('fghYabcdeX');
+describe('data', () => {
+	test('a slice without data renders its kept text with the data of the code it renders in', () => {
+		const rewrite = createRewrite(s, 'abcd');
+		rewrite.wrap(0, 2, rewrite.cut(2, 4), '');
+		expect(collect(view(rewrite, 'view'))).toEqual([
+			{ source: s, start: 2, end: 4, data: 'view' },
+			{ source: s, start: 0, end: 2, data: 'view' },
+		]);
 	});
 
-	test('code at the start of the text stays before all text when a cut that starts there moves', () => {
-		const rewrite = createRewrite(s, 'abcdefgh');
-		const body = view(rewrite);
-		const first = rewrite.cut(0, 3, { data: 'first' });
-		rewrite.insertBefore(8, first);
-		rewrite.insertAfter(0, 'X');
-		rewrite.insertBefore(0, 'Y');
-		expect(render(body)).toBe('XdefghYabc');
+	test('the data of a cut goes over the data of the code it renders in', () => {
+		type Fields = { data: string; extra?: string };
+		const source = { name: s, content: 'abcd' };
+		const rewrite = createSourceRewrite<TestSource, Fields>(source);
+		const inner = rewrite.cut(3, 4);
+		const outer = rewrite.cut(1, 3, { extra: 'outer' });
+		rewrite.wrap(0, 1, [outer, inner], '');
+		const pieces: Piece<RewriteOrigin<TestSource, Fields>>[] = [];
+		rewrite.render(0, 4, piece => pieces.push(piece), { data: 'view' });
+		expect(pieces).toEqual([
+			{ source, start: 1, end: 3, data: 'view', extra: 'outer' },
+			{ source, start: 3, end: 4, data: 'view' },
+			{ source, start: 0, end: 1, data: 'view' },
+		]);
 	});
 
-	test('head code renders by rank descending and tail code by rank ascending', () => {
-		const rewrite = createRewrite(s, 'ab');
-		const body = view(rewrite);
-		for (const [name, writer] of [['0', rewrite.writer(0)], ['c', rewrite], ['1', rewrite.writer(1)]] as const) {
-			writer.insertAfter(0, `h${name}`);
-			writer.insertBefore(2, `t${name}`);
-		}
-		expect(render(body)).toBe('hch1h0abt0t1tc');
-	});
-
-	test('code before all text renders in a view from 0, and code after all text in a view to the end', () => {
-		const rewrite = createRewrite(s, 'abc');
-		rewrite.insertAfter(0, 'H');
-		rewrite.insertBefore(0, 'B');
-		rewrite.insertAfter(3, 'A');
-		rewrite.insertBefore(3, 'T');
-		const views = [[0, 0], [0, 3], [1, 2], [3, 3]] as const;
-		expect(views.map(([start, end]) => render(view(rewrite, 'v', start, end)))).toEqual(['H', 'HBabcAT', 'b', 'T']);
-	});
-
-	test('an empty text renders its inserts in a view, after code before code', () => {
-		const rewrite = createRewrite(s, '');
-		rewrite.insertBefore(0, 'B1');
-		rewrite.writer(0).insertAfter(0, 'A0');
-		rewrite.insertAfter(0, 'A1');
-		rewrite.insertBefore(0, 'B2');
-		expect(collect(view(rewrite))).toEqual(['A1', 'A0', 'B1', 'B2']);
+	test('a slice placed in a moved slice renders with its data, and by itself with the data it is given', () => {
+		const rewrite = createRewrite(s, 'abcd');
+		const moved = rewrite.cut(0, 2, { data: 'moved' });
+		rewrite.wrap(0, 1, '', rewrite.cut(3, 4));
+		rewrite.wrap(2, 4, '', moved);
+		expect(collect(view(rewrite, 'view'))).toEqual([
+			{ source: s, start: 2, end: 3, data: 'view' },
+			{ source: s, start: 0, end: 1, data: 'moved' },
+			{ source: s, start: 3, end: 4, data: 'moved' },
+			{ source: s, start: 1, end: 2, data: 'moved' },
+		]);
+		const alone = createRewrite(s, 'ab').cut(0, 1);
+		expect(collect(alone)).toEqual([{ source: s, start: 0, end: 1, data: 'self' }]);
 	});
 });
 
 describe('runs', () => {
-	test('a removal next to a run boundary or an insert renders no empty run', () => {
+	test('a removal next to a run boundary or code renders no empty run', () => {
 		const rewrite = createRewrite(s, 'abcdef');
 		const body = view(rewrite);
-		const writer = rewrite.writer(0);
-		writer.replace(0, 2, 'X');
-		writer.insertBefore(2, 'Y');
-		writer.replace(4, 6, '');
+		rewrite.replace(0, 2, 'X');
+		rewrite.wrap(2, 3, 'Y', '');
+		rewrite.replace(4, 6, '');
 		expect(collect(body)).toEqual(['X', 'Y', { source: s, start: 2, end: 4, data: 'body' }]);
 	});
 
@@ -409,11 +502,10 @@ describe('runs', () => {
 		const body = view(rewrite);
 		const placed = rewrite.cut(0, 1, { data: 'placed' });
 		const unplaced = rewrite.cut(2, 4, { data: 'unplaced' });
-		rewrite.insertBefore(0, 'x');
-		rewrite.insertBefore(3, 'y');
-		rewrite.insertAfter(6, ['z', placed]);
+		rewrite.wrap(0, 1, 'x', '');
+		rewrite.wrap(3, 4, 'y', '');
+		rewrite.wrap(1, 6, '', ['z', placed]);
 		expect(rewrite.unrendered()).toEqual([placed, unplaced]);
-		// the code before the char 0 is of the slice that holds it
 		expect(render(body)).toBe('befzxa');
 		expect(rewrite.unrendered()).toEqual([unplaced]);
 		expect(render(unplaced)).toBe('cyd');
@@ -425,8 +517,8 @@ describe('runs', () => {
 		const body = view(rewrite);
 		const outer = rewrite.cut(1, 5, { data: 'outer', placeholder: 'O' });
 		const inner = rewrite.cut(2, 3, { data: 'inner', placeholder: 'I' });
-		rewrite.insertAfter(3, ['[', outer, ']']);
-		rewrite.insertBefore(6, ['{', inner, '}']);
+		rewrite.wrap(2, 3, '', ['[', outer, ']']);
+		rewrite.wrap(0, 6, '', ['{', inner, '}']);
 		expect(render(body)).toBe('aOf{c[bIde]}');
 	});
 });
@@ -437,7 +529,7 @@ describe('construction errors', () => {
 		const a = rewrite.cut(0, 1, { data: 'a', placeholder: '<a>' });
 		const c = rewrite.cut(3, 4, { data: 'c', placeholder: '<c>' });
 		const b = rewrite.cut(2, 5, { data: 'b', placeholder: '<b>' });
-		rewrite.insertBefore(7, [a, b, c]);
+		rewrite.wrap(0, 7, '', [a, b, c]);
 		expect(render(view(rewrite))).toBe('<a>b<b>fgac<c>ed');
 	});
 
@@ -445,7 +537,7 @@ describe('construction errors', () => {
 		const rewrite = createRewrite(s, 'abc');
 		const outer = rewrite.cut(0, 3, { data: 'outer' });
 		const inner = rewrite.cut(0, 3, { data: 'inner', placeholder: 'P' });
-		expect(collect(outer)).toEqual(['P']);
+		expect(render(outer)).toBe('P');
 		expect(collect(inner)).toEqual([{ source: s, start: 0, end: 3, data: 'inner' }]);
 	});
 
@@ -461,13 +553,29 @@ describe('construction errors', () => {
 		rewrite.cut(3, 5, { data: 'b' });
 	});
 
+	test('a wrap that crosses a cut is an error at the first render', () => {
+		const starting = createRewrite(s, 'abcdef');
+		starting.wrap(3, 6, '(', ')');
+		starting.cut(1, 4);
+		expect(() => render(view(starting))).toThrow('The wrap 3..6 crosses the cut 1..4.');
+		const ending = createRewrite(s, 'abcdef');
+		ending.wrap(0, 3, '(', ')');
+		ending.cut(2, 5);
+		expect(() => render(view(ending))).toThrow('The wrap 0..3 crosses the cut 2..5.');
+		const around = createRewrite(s, 'abcdef');
+		around.wrap(1, 5, '(', ')');
+		around.wrap(2, 4, '[', ']');
+		around.wrap(0, 6, '', around.cut(2, 4));
+		expect(render(view(around))).toBe('a(be)f[cd]');
+	});
+
 	test('a rewrite whose pieces carry no fields beyond their source takes none in its cuts and views', () => {
 		const source = { content: 'abc' };
 		const rewrite = createSourceRewrite(source);
 		expect(rewrite.source).toBe(source);
 		const moved = rewrite.cut(1, 2);
 		rewrite.replace(0, 1, { source, start: 0, end: 1, text: 'A' });
-		rewrite.insertBefore(3, moved);
+		rewrite.wrap(0, 3, '', moved);
 		const pieces: Piece<RewriteOrigin<typeof source, {}>>[] = [];
 		rewrite.render(0, 3, piece => pieces.push(piece));
 		expect(pieces.map(rewritePieceText).join('')).toBe('Acb');
@@ -477,7 +585,7 @@ describe('construction errors', () => {
 		const inOwnRange = createRewrite(s, 'abcdef');
 		const body = view(inOwnRange);
 		const cut = inOwnRange.cut(1, 4, { data: 'cut' });
-		inOwnRange.insertBefore(2, cut);
+		inOwnRange.wrap(2, 3, cut, '');
 		const message = 'The cut 1..4 is placed inside itself, so it never renders.';
 		expect(() => collect(body)).toThrow(message);
 		expect(() => collect(cut)).toThrow(message);
@@ -493,8 +601,8 @@ describe('construction errors', () => {
 		const whole = inEachOther.cut(0, 6, { data: 'whole' });
 		const first = inEachOther.cut(1, 2, { data: 'first' });
 		const second = inEachOther.cut(3, 4, { data: 'second' });
-		inEachOther.insertBefore(1, second);
-		inEachOther.insertBefore(3, first);
+		inEachOther.wrap(1, 2, second, '');
+		inEachOther.wrap(3, 4, first, '');
 		expect(() => collect(whole)).toThrow('is placed inside itself');
 	});
 
@@ -503,8 +611,8 @@ describe('construction errors', () => {
 		const b = createRewrite(other, 'xyz');
 		const aCut = a.cut(0, 3, { data: 'a' });
 		const bCut = b.cut(0, 3, { data: 'b' });
-		a.insertBefore(1, bCut);
-		b.insertBefore(1, aCut);
+		a.wrap(1, 2, bCut, '');
+		b.wrap(1, 2, aCut, '');
 		expect(() => collect(aCut)).toThrow('The cut 0..3 is placed inside itself, so it never renders.');
 	});
 
@@ -517,24 +625,24 @@ describe('construction errors', () => {
 		const twice = createRewrite(s, 'abc');
 		const whole = view(twice);
 		const moved = twice.cut(1, 2, { data: 'moved' });
-		twice.insertBefore(0, moved);
-		twice.insertBefore(3, moved);
+		twice.wrap(0, 1, moved, '');
+		twice.wrap(2, 3, '', moved);
 		expect(() => collect(whole)).toThrow('The cut 1..2 is placed twice.');
 
 		const placedAfter = createRewrite(s, 'abc');
 		const after = view(placedAfter);
 		const early = placedAfter.cut(1, 2, { data: 'early' });
-		placedAfter.insertBefore(3, early);
+		placedAfter.wrap(2, 3, '', early);
 		collect(early);
 		expect(() => collect(after)).toThrow('The cut 1..2 is already rendered; a slice renders once.');
 	});
 
 	test('a view renders again, and a slice placed in it is then placed twice', () => {
 		const rewrite = createRewrite(s, 'abc');
-		rewrite.insertBefore(1, 'x');
+		rewrite.wrap(1, 2, 'x', '');
 		expect([render(view(rewrite)), render(view(rewrite))]).toEqual(['axbc', 'axbc']);
 		const placing = createRewrite(s, 'abc');
-		placing.insertBefore(0, placing.cut(1, 2, { data: 'moved' }));
+		placing.wrap(0, 1, placing.cut(1, 2, { data: 'moved' }), '');
 		expect(render(view(placing))).toBe('bac');
 		expect(() => render(view(placing))).toThrow('The cut 1..2 is placed twice.');
 	});
@@ -543,7 +651,8 @@ describe('construction errors', () => {
 		const rewrite = createRewrite(s, 'abc');
 		const body = view(rewrite);
 		collect(body);
-		expect(() => rewrite.writer(0).insertBefore(1, 'x')).toThrow('The rewrite is already rendered.');
+		expect(() => rewrite.wrap(1, 2, 'x', '')).toThrow('The rewrite is already rendered.');
+		expect(() => rewrite.replace(1, 2, 'x')).toThrow('The rewrite is already rendered.');
 		expect(() => rewrite.cut(1, 2, { data: 'late' })).toThrow('The rewrite is already rendered.');
 	});
 
@@ -564,13 +673,25 @@ describe('construction errors', () => {
 		expect(rewritePieceText({ source, start: 3, end: 3 })).toBe('');
 	});
 
-	test('offsets out of the text, an empty replace and an invalid rank are errors', () => {
+	test('ranges out of the text are errors', () => {
 		const rewrite = createRewrite(s, 'abc');
-		expect(() => rewrite.insertBefore(4, 'x')).toThrow('The offset 4 is out of 0..3.');
-		expect(() => rewrite.writer(0).replace(2, 1, 'x')).toThrow('The range 2..1 is out of 0..3.');
-		expect(() => rewrite.writer(0).replace(1, 1, 'x')).toThrow('The replace at 1 removes no char.');
-		expect(() => rewrite.writer(-1)).toThrow('is not a non-negative integer');
+		expect(() => rewrite.wrap(4, 4, 'x', '')).toThrow('The offset 4 is out of 0..3.');
+		expect(() => rewrite.wrap(1, 4, '(', ')')).toThrow('The range 1..4 is out of 0..3.');
+		expect(() => rewrite.replace(2, 1, 'x')).toThrow('The range 2..1 is out of 0..3.');
+		expect(() => rewrite.replace(0.5, 1, 'x')).toThrow('The range 0.5..1 is out of 0..3.');
 		expect(() => rewrite.render(2, 4, () => {}, { data: 'v' })).toThrow('The range 2..4 is out of 0..3.');
+	});
+
+	test('a render after the content of the source changed is an error', () => {
+		const source = { name: s, content: 'abc' };
+		const rewrite = createSourceRewrite<TestSource, TestData>(source);
+		const slice = rewrite.cut(0, 1);
+		source.content = 'abd';
+		const message = 'The content of the source changed after the rewrite was made.';
+		expect(() => render(view(rewrite))).toThrow(message);
+		expect(() => render(slice)).toThrow(message);
+		source.content = 'abc';
+		expect(render(view(rewrite))).toBe('bc');
 	});
 });
 
@@ -587,25 +708,25 @@ describe('properties', () => {
 				const end = start + 1 + random(length - start - 1);
 				const cut = rewrite.cut(start, end, { data: 'moved', placeholder: '<P>' });
 				moved = { start, end };
-				rewrite.insertBefore(random(start + 1) === start ? 0 : random(start), ['{', cut, '}']);
+				const at = random(start);
+				rewrite.wrap(at, at + 1, ['{', cut, '}'], '');
 			}
 			const removals: [number, number][] = [];
 			const tags: string[] = [];
 			for (let edit = random(6); edit > 0; edit--) {
-				const writer = rewrite.writer(1 + random(3));
 				const tag = `#${tags.length}`;
-				const kind = random(3);
-				if (kind === 0) {
-					writer.insertBefore(random(length + 1), tag);
-				}
-				else if (kind === 1) {
-					writer.insertAfter(random(length + 1), tag);
+				let start = random(length + 1);
+				let end = start + random(length - start + 1);
+				if (random(3) === 0) {
+					rewrite.replace(start, end, tag);
+					removals.push([start, end]);
 				}
 				else {
-					const start = random(length);
-					const end = start + 1 + random(length - start);
-					writer.replace(start, end, tag);
-					removals.push([start, end]);
+					// around the moved range or outside it
+					if (moved && start < moved.end && moved.start < end && !(start <= moved.start && moved.end <= end)) {
+						[start, end] = [moved.start, moved.end];
+					}
+					rewrite.wrap(start, end, tag, '');
 				}
 				tags.push(tag);
 			}
@@ -622,45 +743,7 @@ describe('properties', () => {
 		}
 	});
 
-	test('random edits render the same whatever order the writers register in', () => {
-		const random = createRandom(2);
-		for (let iteration = 0; iteration < 5000; iteration++) {
-			const length = 1 + random(10);
-			const edits = Array.from({ length: random(7) }, (_, index) => {
-				const rank = random(3);
-				const kind = random(3);
-				const start = random(length);
-				const end = start + 1 + random(length - start);
-				const offset = random(length + 1);
-				const tag = `#${index}`;
-				return {
-					rank,
-					apply: (writer: RewriteWriter<TestSource, TestData>) =>
-						kind === 0
-							? writer.insertBefore(offset, tag)
-							: kind === 1
-							? writer.insertAfter(offset, tag)
-							: writer.replace(start, end, tag),
-				};
-			});
-			const renderEdits = (list: typeof edits) => {
-				const rewrite = createRewrite(s, alphabet(length));
-				const root = view(rewrite, 'root');
-				for (const edit of list) {
-					edit.apply(rewrite.writer(edit.rank));
-				}
-				return render(root);
-			};
-			// interleave the writers, keeping the call order of each
-			const queues = [0, 1, 2].map(rank => edits.filter(edit => edit.rank === rank));
-			const interleaved = edits.map(() => random(3)).map(rank =>
-				queues[rank]!.length ? queues[rank]!.shift()! : queues.find(queue => queue.length)!.shift()!
-			);
-			expect(renderEdits(interleaved)).toBe(renderEdits(edits));
-		}
-	});
-
-	test('random nested cuts render every kept char once and verbatim in the fewest runs, every code once, edge code at the edges', () => {
+	test('random nested cuts render every kept char once and verbatim in the fewest runs, every code once, the code around the text around it', () => {
 		const random = createRandom(3);
 		let nested = 0;
 		for (let iteration = 0; iteration < 20000; iteration++) {
@@ -683,15 +766,16 @@ describe('properties', () => {
 			expect(offsets.sort((a, b) => a - b)).toEqual(keptOffsets(length, removals));
 			const text = toText(segments);
 			for (const edit of testCase.edits) {
-				expect(text.split(edit.tag).length).toBe(2);
+				expect(text.split(edit.tag).length).toBe(edit.kind === 'wrap' ? 3 : 2);
 			}
-			const head = testCase.edits.filter(edit => edit.kind === 'insertAfter' && edit.start === 0);
-			const tail = testCase.edits.filter(edit => edit.kind === 'insertBefore' && edit.start === length);
-			if (head.length) {
-				expect(head.some(edit => text.startsWith(edit.tag))).toBe(true);
-			}
-			if (tail.length) {
-				expect(tail.some(edit => text.endsWith(edit.tag))).toBe(true);
+			const whole = testCase.edits.filter(edit => edit.kind === 'wrap' && edit.start === 0 && edit.end === length);
+			// a cut of the whole text holds the wraps of it
+			if (whole.length && !testCase.cuts.some(cut => cut.start === 0 && cut.end === length)) {
+				expect(text.startsWith(`(${whole.at(-1)!.tag}`)).toBe(true);
+				// an empty range at the end of the text renders after the last char and its code
+				if (!testCase.edits.some(edit => edit.start === length && edit.end === length)) {
+					expect(text.endsWith(`)${whole.at(-1)!.tag}`)).toBe(true);
+				}
 			}
 		}
 		expect(nested).toBeGreaterThan(1000);
@@ -702,7 +786,6 @@ describe('properties', () => {
 		for (let iteration = 0; iteration < 5000; iteration++) {
 			const length = 1 + random(14);
 			const testCase = createNestedCase(random, length);
-			// views of no char from 0 or to the end would render the code before or after all text again
 			const bounds = [...new Set([0, ...Array.from({ length: random(4) }, () => random(length + 1)), length])]
 				.sort((a, b) => a - b);
 			const whole = buildNestedCase(createRewrite(s, alphabet(length)), testCase, random);
@@ -722,8 +805,7 @@ interface NestedCut {
 }
 
 interface NestedEdit {
-	kind: 'insertBefore' | 'insertAfter' | 'replace';
-	rank: number | undefined;
+	kind: 'wrap' | 'replace';
 	start: number;
 	end: number;
 	tag: string;
@@ -732,6 +814,8 @@ interface NestedEdit {
 /** Random edits and a random family of nested or disjoint cuts, each placed in place or at a char of its parent. */
 function createNestedCase(random: (below: number) => number, length: number) {
 	const cuts: NestedCut[] = [];
+	const crosses = (a: number, b: number) =>
+		cuts.some(cut => (cut.start < a && a < cut.end && cut.end < b) || (a < cut.start && cut.start < b && b < cut.end));
 	const grow = (start: number, end: number, depth: number) => {
 		if (depth > 3 || end - start < 1) {
 			return;
@@ -739,11 +823,7 @@ function createNestedCase(random: (below: number) => number, length: number) {
 		for (let count = random(3); count > 0; count--) {
 			const a = start + random(end - start);
 			const b = a + 1 + random(end - a);
-			if (
-				cuts.some(cut =>
-					(cut.start < a && a < cut.end && cut.end < b) || (a < cut.start && cut.start < b && b < cut.end)
-				)
-			) {
+			if (crosses(a, b)) {
 				continue;
 			}
 			cuts.push({ start: a, end: b, id: cuts.length, inPlace: random(3) === 0 });
@@ -789,17 +869,20 @@ function createNestedCase(random: (below: number) => number, length: number) {
 		}
 	}
 	const edits: NestedEdit[] = [];
-	const kinds = ['insertBefore', 'insertAfter', 'replace'] as const;
 	for (let count = random(8); count > 0; count--) {
-		const kind = kinds[random(3)]!;
-		const rank = random(3);
-		const start = kind === 'replace' ? random(length) : random(length + 1);
-		const end = kind === 'replace' ? start + 1 + random(length - start) : start;
-		edits.push({ kind, rank, start, end, tag: `#${edits.length}` });
+		const start = random(length + 1);
+		const end = start + random(length - start + 1);
+		if (random(3) === 0) {
+			if (start < end) {
+				edits.push({ kind: 'replace', start, end, tag: `#${edits.length}` });
+			}
+		}
+		else if (!crosses(start, end)) {
+			edits.push({ kind: 'wrap', start, end, tag: `#${edits.length}` });
+		}
 	}
 	if (random(2)) {
-		const offset = random(length + 1);
-		edits.push({ kind: kinds[random(2)]!, rank: undefined, start: offset, end: offset, tag: `#${edits.length}` });
+		edits.push({ kind: 'wrap', start: 0, end: length, tag: `#${edits.length}` });
 	}
 	return { length, cuts, edits };
 }
@@ -826,21 +909,16 @@ function buildNestedCase(
 	for (const cut of cuts) {
 		if (cut.place) {
 			const code = ['{', slices[cut.id]!, '}'];
-			if (cut.place.after) {
-				rewrite.insertAfter(cut.place.at + 1, code);
-			}
-			else {
-				rewrite.insertBefore(cut.place.at, code);
-			}
+			const { at, after } = cut.place;
+			rewrite.wrap(at, at + 1, after ? '' : code, after ? code : '');
 		}
 	}
 	for (const edit of edits) {
-		const writer = edit.rank === undefined ? rewrite : rewrite.writer(edit.rank);
 		if (edit.kind === 'replace') {
-			writer.replace(edit.start, edit.end, edit.tag);
+			rewrite.replace(edit.start, edit.end, edit.tag);
 		}
 		else {
-			writer[edit.kind](edit.start, edit.tag);
+			rewrite.wrap(edit.start, edit.end, `(${edit.tag}`, `)${edit.tag}`);
 		}
 	}
 	return rewrite;

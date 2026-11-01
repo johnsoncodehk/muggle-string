@@ -306,16 +306,16 @@ describe('renderWithSourceMap', () => {
 		for (const { index } of source.content.matchAll(/\bname\b/g)) {
 			rewrite.replace(index, index + 'name'.length, 'user');
 		}
-		rewrite.insertBefore(0, rewrite.cut(11, source.content.length));
-		rewrite.insertAfter(0, '// generated\n');
+		rewrite.wrap(0, 11, rewrite.cut(11, source.content.length), '');
+		rewrite.wrap(0, source.content.length, '// generated\n', '');
 		const pieces: TestPiece[] = [];
 		rewrite.render(0, source.content.length, piece => pieces.push(piece));
 		const fresh = createSourceRewrite(source);
 		for (const { index } of source.content.matchAll(/\bname\b/g)) {
 			fresh.replace(index, index + 'name'.length, 'user');
 		}
-		fresh.insertBefore(0, fresh.cut(11, source.content.length));
-		fresh.insertAfter(0, '// generated\n');
+		fresh.wrap(0, 11, fresh.cut(11, source.content.length), '');
+		fresh.wrap(0, source.content.length, '// generated\n', '');
 		const rendered = renderWithSourceMap(sink => fresh.render(0, source.content.length, sink), from => from.name);
 		expect(rendered).toEqual(check(pieces));
 	});

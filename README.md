@@ -8,9 +8,9 @@ I wrote muggle-string for [vuejs/language-tools](https://github.com/vuejs/langua
 
 In vuejs/language-tools, plugins for props, emits, models, slots and refs all edit the same `<script setup>` block. The generator moves parts of it, such as the expression of the default export, and renders the block in several pieces around the template code. Every piece of the output keeps the editor features of the code it came from, such as hover, completion and rename. muggle-string is the model behind that, without Vue in it. I wanted three things from it:
 
-- **Edits stay correct.** The plugins do not know about each other. Removals add up, so no edit undoes another. Code at one position is ordered by the rank of its writer, so the order of the plugins decides it, not the order of the calls. The tests in `tests/` check both with random edits.
+- **Edits stay correct.** The plugins do not know about each other. Removals add up, so no edit undoes another. Code belongs to a range of the text and nests by ranges, so the code of two plugins around the same expression nests the same way whatever order they run in. The tests in `tests/` check both with random edits.
 - **Maps are exact where tools read them.** The same pieces give the spans of a language server and a v3 source map for debuggers. In the source map, generated code maps to nothing, so a debugger never shows it as your code, even when it looks back across lines as V8 does. Kept code maps exactly at token starts in JavaScript, TypeScript, HTML and CSS, which is where breakpoints, stack traces and coverage read. The tests check every generated char of the map.
-- **Performance first.** A language server generates the code again after each change to a file, so the model skips work it does not need. An insert or a replace is only appended to the list of its writer. No text is searched, split or copied when you edit. The first render sorts the edits once, or not at all when they arrived in order, and then freezes the rewrite, so later edits throw. A render passes kept text as ranges of the source and never copies it. Whether to build a string from the pieces is up to you. With Node 24 on an Apple M2, for a 1 MB text with 100,000 inserts and replaces at random offsets from 4 writers, each edit costs about 115 ns in a fresh process and about 37 ns once warm, however many came before, and rendering the text to a string takes about 40 ms cold and 29 ms warm.
+- **Performance first.** A language server generates the code again after each change to a file, so the model skips work it does not need. A wrap or a replace is only appended to a list. No text is searched, split or copied when you edit. The first render sorts the edits once, or not at all when they arrived in order, and then freezes the rewrite, so later edits throw. A render passes kept text as ranges of the source and never copies it. Whether to build a string from the pieces is up to you. With Node 24 on an Apple M2, for a 1 MB text with 100,000 wraps and replaces at random offsets, each edit costs about 115 ns in a fresh process and about 37 ns once warm, however many came before, and rendering the text to a string takes about 40 ms cold and 29 ms warm.
 
 ## Adoption
 
@@ -34,7 +34,8 @@ const rewrite = createSourceRewrite(source);
 for (const { index: start } of source.content.matchAll(/\bname\b/g)) {
 	rewrite.replace(start, start + 'name'.length, 'user');
 }
-rewrite.insertBefore(0, rewrite.cut(source.content.indexOf('const'), source.content.length));
+const at = source.content.indexOf('const');
+rewrite.wrap(0, at, rewrite.cut(at, source.content.length), '');
 
 let text = '';
 rewrite.render(0, source.content.length, piece => text += rewritePieceText(piece));
@@ -43,33 +44,28 @@ console.log(text);
 // log(user);
 ```
 
-A source is any object with `content`. Do not change the content until the rewrite is rendered.
+A source is any object with `content`. A render after the content changed throws.
 
-#### Writers and ranks
+#### Wraps
 
 ```ts
 import { createSourceRewrite, rewritePieceText } from 'muggle-string';
 
-const source = { content: 'f(x)' };
+const source = { content: 'f(x, y)' };
 const rewrite = createSourceRewrite(source);
-const inner = rewrite.writer(0);
-const outer = rewrite.writer(1);
 
-inner.insertBefore(2, '(');
-outer.insertBefore(2, '[');
-rewrite.insertBefore(2, '{');
-inner.insertAfter(3, ')');
-outer.insertAfter(3, ']');
-rewrite.insertAfter(3, '}');
-inner.insertAfter(3, '!');
+rewrite.wrap(2, 3, '(', ')');
+rewrite.wrap(2, 6, '[', ']');
+rewrite.wrap(2, 3, '{', '}');
+rewrite.replace(5, 6, 'z');
 
 let text = '';
 rewrite.render(0, source.content.length, piece => text += rewritePieceText(piece));
 console.log(text);
-// f({[(x)!]})
+// f([{(x)}, z])
 ```
 
-At one position, code of a higher rank goes outside code of a lower rank, whatever the order of the calls. The rewrite itself is the outermost writer. Code of one writer at one position keeps call order.
+Wraps nest by their ranges, whatever the order of the calls, so a visitor can wrap each node when it enters it, when it leaves it, or both at once. Of one range, a later wrap goes outside. A `replace` goes inside the wraps of its range.
 
 #### Move with a cut
 
@@ -84,7 +80,7 @@ rewrite.replace(20, 21, '2');
 console.log(rewrite.unrendered().length);
 // 1
 
-rewrite.insertBefore(0, ['const __options = ', object, ';\n']);
+rewrite.wrap(0, source.content.length, ['const __options = ', object, ';\n'], '');
 let text = '';
 rewrite.render(0, source.content.length, piece => text += rewritePieceText(piece));
 console.log(text);
@@ -96,24 +92,24 @@ console.log(rewrite.unrendered().length);
 
 The slice renders the range, with every edit inside it, where you place it. The placeholder renders where the range was.
 
-Kept text of a slice carries the data of its cut, also in a view with other data:
+Kept text of a slice gets the data of the code it renders in, with the fields given to its cut over it:
 
 ```ts
 import { createSourceRewrite, rewritePieceText } from 'muggle-string';
 
 const source = { content: 'f(a, b)' };
-const rewrite = createSourceRewrite<typeof source, { from: string }>(source);
-rewrite.insertBefore(2, rewrite.cut(5, 6, { from: 'cut' }));
+const rewrite = createSourceRewrite<typeof source, { view: string; moved: boolean }>(source);
+rewrite.wrap(2, 3, rewrite.cut(5, 6, { moved: true }), '');
 
 const parts: string[] = [];
 rewrite.render(0, 7, piece => {
-	parts.push(typeof piece === 'string' ? piece : `${rewritePieceText(piece)}@${piece.from}`);
-}, { from: 'view' });
+	parts.push(typeof piece === 'string' ? piece : `${rewritePieceText(piece)}@${piece.view}${piece.moved ? '+moved' : ''}`);
+}, { view: 'main', moved: false });
 console.log(parts.join(' '));
-// f(@view b@cut a, @view )@view
+// f(@main b@main+moved a, @main )@main
 ```
 
-To wrap a range where it is, insert around it instead of cutting it.
+To wrap a range where it is, wrap it instead of cutting it.
 
 #### Views
 
@@ -122,7 +118,7 @@ import { createSourceRewrite, rewritePieceText } from 'muggle-string';
 
 const source = { content: 'let a = 1;\nlet b = 2;\n' };
 const rewrite = createSourceRewrite<typeof source, { view: string }>(source);
-rewrite.insertAfter(0, '// start\n');
+rewrite.wrap(0, source.content.length, '// start\n', '');
 rewrite.replace(4, 5, 'x');
 
 function view(start: number, end: number, name: string) {
@@ -143,38 +139,31 @@ view(4, 22, 'second');
 // "x = 1;\nlet b = 2;\n" second
 ```
 
-A view owns no text, so views can overlap and render again. Kept text gets the data passed to `render`. Code inserted before all text (`insertAfter(0, …)`) renders with a view that starts at 0, and code after all text with a view that ends at the end.
+A view owns no text, so views can overlap and render again. Kept text gets the data passed to `render`. Code before all text, `wrap(0, length, code, '')`, renders with the first char, so with a view that starts at 0.
 
-#### Inserts at the edges of a view
+#### Code at the edges of a view
 
 ```ts
 import { createSourceRewrite, rewritePieceText } from 'muggle-string';
 
 const source = { content: 'a+b' };
 const rewrite = createSourceRewrite(source);
-rewrite.insertAfter(1, '>');
-rewrite.insertBefore(1, '<');
+rewrite.wrap(0, 1, '(', ')');
+rewrite.replace(1, 1, '|');
+rewrite.replace(3, 3, '!');
 
-for (const [start, end] of [[0, 1], [1, 3], [1, 1]] as const) {
+for (const [start, end] of [[0, 1], [1, 3], [1, 1], [3, 3]] as const) {
 	let text = '';
 	rewrite.render(start, end, piece => text += rewritePieceText(piece));
 	console.log(start, end, JSON.stringify(text));
 }
-// 0 1 "a>"
-// 1 3 "<+b"
+// 0 1 "(a)"
+// 1 3 "|+b!"
 // 1 1 ""
-
-const empty = { content: '' };
-const emptyRewrite = createSourceRewrite(empty);
-emptyRewrite.insertBefore(0, 'B');
-emptyRewrite.insertAfter(0, 'A');
-let text = '';
-emptyRewrite.render(0, 0, piece => text += rewritePieceText(piece));
-console.log(JSON.stringify(text));
-// "AB"
+// 3 3 "!"
 ```
 
-An insert attaches to a side of a char: `insertBefore(offset, …)` to the char at `offset`, `insertAfter(offset, …)` to the char before it. A view renders the inserts of the chars it renders, so the view `a`..`b` renders `insertBefore(a, …)` and `insertAfter(b, …)`, but not `insertAfter(a, …)` or `insertBefore(b, …)`. An empty view inside the text, like `1`..`1`, renders no inserts. An empty view at 0 or at the end renders the code before or after all text, so in an empty source `render(0, 0)` renders both. Pick the side by the text the code belongs to: code at the end of an expression is `insertAfter(end, …)`, so it still renders when the expression becomes a view.
+The before of a wrap renders with the first char of its range and the after with its last, so a view renders the code of the text it renders. Code at an empty range sits between two chars, and renders with the char after it, or at the end of the text with a view that ends there, so consecutive views render it once. An empty view inside the text renders nothing.
 
 #### Data on part of the kept text
 
@@ -197,43 +186,6 @@ console.log(parts.join('|'));
 
 Kept text gets its data from the view, so render consecutive views to give parts of a range different data.
 
-#### Nesting
-
-```ts
-import { createSourceRewrite, rewritePieceText } from 'muggle-string';
-
-const source = { content: 'xy' };
-
-function wrap(order: 'pre-order' | 'enter and leave' | 'pre-order with ranks') {
-	const rewrite = createSourceRewrite(source);
-	const outer = order === 'pre-order with ranks' ? rewrite.writer(1) : rewrite;
-	const inner = order === 'pre-order with ranks' ? rewrite.writer(0) : rewrite;
-	if (order === 'enter and leave') {
-		rewrite.insertBefore(0, '(');
-		rewrite.insertBefore(1, '[');
-		rewrite.insertAfter(2, ']');
-		rewrite.insertAfter(2, ')');
-	}
-	else {
-		outer.insertBefore(0, '(');
-		outer.insertAfter(2, ')');
-		inner.insertBefore(1, '[');
-		inner.insertAfter(2, ']');
-	}
-	let text = '';
-	rewrite.render(0, 2, piece => text += rewritePieceText(piece));
-	console.log(text, order);
-}
-wrap('pre-order');
-// (x[y)] pre-order
-wrap('enter and leave');
-// (x[y]) enter and leave
-wrap('pre-order with ranks');
-// (x[y]) pre-order with ranks
-```
-
-To wrap nested nodes, write the open code when you enter a node and the close code when you leave it: the closes of nodes that end at one position then come inner first, in call order. If you write each open and close together, in pre-order, the closes come outer first; give each depth its own writer, with a higher rank further out.
-
 #### Zero-width positions
 
 ```ts
@@ -242,7 +194,7 @@ import { createSourceRewrite, rewritePieceText } from 'muggle-string';
 const source = { content: 'a +' };
 const rewrite = createSourceRewrite(source);
 const at = source.content.length;
-rewrite.insertBefore(at, { source, start: at, end: at, text: ' missing' });
+rewrite.replace(at, at, { source, start: at, end: at, text: ' missing' });
 
 rewrite.render(0, at, piece => {
 	if (typeof piece !== 'string') {
@@ -253,7 +205,7 @@ rewrite.render(0, at, piece => {
 // 3 3 " missing"
 ```
 
-To map code to a position rather than a range, such as a parse error, insert a range without width: `insertBefore(at, { source, start: at, end: at, text })`. A `replace` of an empty range throws, as it has no side, and so does an offset out of the content (see Errors).
+To map code to a position rather than a range, such as a parse error, replace the empty range at it with a range without width: `replace(at, at, { source, start: at, end: at, text })`. An empty `replace` removes nothing.
 
 #### Code that differs from the source
 
@@ -285,8 +237,8 @@ function toBlock(start: number, end: number, sink: (piece: BlockPiece) => void) 
 
 const code = { content: decoded.map(rewritePieceText).join('') };
 const rewrite = createSourceRewrite(code);
-rewrite.insertBefore(0, '__ctx.');
-rewrite.insertBefore(5, '__ctx.');
+rewrite.wrap(0, 1, '__ctx.', '');
+rewrite.wrap(5, 6, '__ctx.', '');
 
 let text = '';
 const ranges: string[] = [];
@@ -316,7 +268,7 @@ import { createSourceRewrite, rewritePieceText } from 'muggle-string';
 const script = { lang: 'ts', content: 'f();\n' };
 const template = { tag: 'template', content: '{{ a }}' };
 const rewrite = createSourceRewrite<typeof script | typeof template>(script);
-rewrite.insertBefore(2, { source: template, start: 3, end: 4 });
+rewrite.replace(2, 2, { source: template, start: 3, end: 4 });
 
 rewrite.render(0, script.content.length, piece => {
 	if (typeof piece !== 'string') {
@@ -347,41 +299,48 @@ function attempt(edit: () => void) {
 const source = { content: 'a = 1;\nb = 2;\n' };
 const rewrite = createSourceRewrite(source);
 
-attempt(() => rewrite.replace(2, 2, 'x'));
-// The replace at 2 removes no char.
-attempt(() => rewrite.insertBefore(20, 'x'));
+attempt(() => rewrite.wrap(20, 20, 'x', ''));
 // The offset 20 is out of 0..14.
-attempt(() => rewrite.writer(-1));
-// The rank -1 is not a non-negative integer below the rank of the rewrite.
-
 const first = rewrite.cut(0, 6);
 attempt(() => rewrite.cut(4, 9));
 // The cut 4..9 crosses the cut 0..6.
-rewrite.insertBefore(14, first);
+rewrite.wrap(7, 14, '', first);
 rewrite.render(0, 14, () => {});
-attempt(() => rewrite.insertBefore(0, 'x'));
+attempt(() => rewrite.wrap(0, 1, 'x', ''));
 // The rewrite is already rendered.
 attempt(() => first.render(() => {}));
 // The cut 0..6 is already rendered; a slice renders once.
 ```
 
+Some errors depend on all edits, so the first render throws them:
+
 ```ts
-import { createSourceRewrite } from 'muggle-string';
+import { createSourceRewrite, type SourceRewrite } from 'muggle-string';
 
 const source = { content: 'a = 1;\nb = 2;\n' };
-const rewrite = createSourceRewrite(source);
-const slice = rewrite.cut(2, 6);
-rewrite.insertBefore(2, slice);
-try {
-	rewrite.render(0, 14, () => {});
+function attempt(edit: (rewrite: SourceRewrite<typeof source>) => void) {
+	const rewrite = createSourceRewrite(source);
+	edit(rewrite);
+	try {
+		rewrite.render(0, 14, () => {});
+	}
+	catch (error) {
+		console.log((error as Error).message);
+	}
 }
-catch (error) {
-	console.log((error as Error).message);
-}
+
+attempt(rewrite => rewrite.wrap(2, 3, rewrite.cut(2, 6), ''));
 // The cut 2..6 is placed inside itself, so it never renders.
+attempt(rewrite => {
+	rewrite.cut(0, 6);
+	rewrite.wrap(4, 9, '(', ')');
+});
+// The wrap 4..9 crosses the cut 0..6.
+attempt(() => source.content = 'a = 2;\nb = 2;\n');
+// The content of the source changed after the rewrite was made.
 ```
 
-`insertBefore(2, …)` attaches to the first char of the cut, so a slice placed at its own start is inside itself.
+The before of `wrap(2, 3, …)` renders with the first char of the cut, so a slice placed there is inside itself. A wrap that crosses a cut would render one side with the slice and the other where the slice was cut from.
 
 An edit that throws changes nothing, but the edits before it stay, so discard the rewrite after a throw. What the first render throws, every later render throws again.
 
@@ -397,7 +356,8 @@ for (const { index: start } of source.content.matchAll(/\bname\b/g)) {
 	const end = start + 'name'.length;
 	rewrite.replace(start, end, { source, start, end, text: 'user', name: 'name' });
 }
-rewrite.insertBefore(0, rewrite.cut(source.content.indexOf('const'), source.content.length));
+const at = source.content.indexOf('const');
+rewrite.wrap(0, at, rewrite.cut(at, source.content.length), '');
 
 const { text, map } = renderWithSourceMap(
 	sink => rewrite.render(0, source.content.length, sink),
@@ -435,15 +395,16 @@ Offsets always point into the original text, also after other edits.
 |---|---|
 | overwrite a range | `replace(start, end, text)`, or `replace(start, end, { source, start, end, text })` to map it to the range |
 | remove a range | `replace(start, end, '')` |
-| prepend or append to the text | `insertAfter(0, code)` or `insertBefore(source.content.length, code)` |
-| insert at an offset | `insertBefore(offset, code)` or `insertAfter(offset, code)` |
-| move a range | `insertBefore(to, rewrite.cut(start, end))` |
+| prepend or append to the text | `wrap(0, source.content.length, code, '')` or `wrap(0, source.content.length, '', code)` |
+| insert around a range | `wrap(start, end, before, after)`, with `''` for a side without code |
+| insert at an offset | `replace(offset, offset, code)` |
+| move a range | `replace(to, to, rewrite.cut(start, end))` |
 | read the result | `rewrite.render(0, source.content.length, piece => text += rewritePieceText(piece))` |
 | get a source map | `renderWithSourceMap`, above |
 
 ## What the techniques save
 
-Each technique in the table adds code. `npm run bench` builds the source and, for each technique, a variant with only that technique taken out (`bench/variants.mjs`), checks that all of them give the same output by hash, and times each in a fresh process on fixed inputs: about 1 MB of code-like text, and edits at distinct offsets from 4 writers. `bench/table.mjs` makes the tables below. Each figure is a single round, so differences of a few percent are near the noise. Node 24.15, Apple M2, in ms; cold is the first run in a process, warm the median of 20 runs after 20 more.
+Each technique in the table adds code. `npm run bench` builds the source and, for each technique, a variant with only that technique taken out (`bench/variants.mjs`), checks that all of them give the same output by hash, and times each in a fresh process on fixed inputs: about 1 MB of code-like text, and edits at distinct offsets. `bench/table.mjs` makes the tables below. Each figure is a single round, so differences of a few percent are near the noise. Node 24.15, Apple M2, in ms; cold is the first run in a process, warm the median of 20 runs after 20 more.
 
 | Technique | Workload | Warm, with → without | Cold, with → without |
 |---|---|---|---|
@@ -472,22 +433,21 @@ The baselines are the 0.4 segment array, whose every edit scans and splits the s
 <details>
 <summary>Editing</summary>
 
-- `insertBefore(offset, code)` attaches code to the char at `offset`, and `insertAfter(offset, code)` to the char before it. The code moves with that char.
-- `replace(start, end, code)` removes `start`..`end` and puts `code` in its place. An empty range throws; to map code to a position, insert `{ source, start: at, end: at, text }`.
+- `wrap(start, end, before, after)` puts `before` before the text of the range and `after` after it. Wraps nest by their ranges, whatever the order of the calls. Of one range, a later wrap goes outside. `before` renders with the first char of the range and `after` with its last, so code moves with that text. An empty range is at the char at `start`, or at the end of the text. A side that is `''` adds nothing.
+- `replace(start, end, code)` removes `start`..`end` and puts `code` in its place, inside the wraps of the range. An empty range removes nothing; to map the code to the position, write `{ source, start: at, end: at, text }`.
 - Offsets of edits, cuts and views that are not integers in 0..the length of the content throw.
-- `rewrite.writer(rank)` gives a writer with its own rank. At one position, code of a higher rank goes outside code of a lower rank. The rewrite itself is the outermost writer. Code of one writer at one position keeps call order.
 - `rewrite.cut(start, end, options)` takes a range out and returns a slice. The slice renders the range, with every edit inside it, where you place it. `options.placeholder` renders where the range was.
-- Cuts can be made in any order. A cut inside another moves with it. A cut that crosses another throws, naming both ranges.
-- Kept text of a slice carries the data of its cut, wherever the slice renders.
-- A slice renders exactly once. Rendering it again throws. A slice placed inside its own range, also by `insertBefore` at its start, throws at the first render. `rewrite.unrendered()` lists the slices that have not rendered yet.
-- The first render freezes the rewrite, so later edits throw.
+- Cuts can be made in any order. A cut inside another moves with it. A cut that crosses another throws, naming both ranges. A wrap that crosses a cut throws at the first render.
+- Kept text of a slice gets the data of the code it renders in, with the other fields of `options` over it.
+- A slice renders exactly once. Rendering it again throws. A slice placed inside its own range, also by a wrap that starts at its start, throws at the first render. `rewrite.unrendered()` lists the slices that have not rendered yet.
+- The first render freezes the rewrite, so later edits throw. A render after the content of the source changed throws.
 
 </details>
 
 <details>
 <summary>Rendering</summary>
 
-`rewrite.render(start, end, sink, data)` passes the pieces of `start`..`end` to `sink`, in order. You can render several ranges, and they may overlap. A range renders the code attached to its chars: `insertBefore(start, …)` and `insertAfter(end, …)`, not `insertAfter(start, …)` or `insertBefore(end, …)`. An empty range inside the text renders no code. Code inserted before all text (`insertAfter(0, …)`) renders with a range that starts at 0, and code after all text with a range that ends at the end, so `render(0, 0)` of an empty source renders both.
+`rewrite.render(start, end, sink, data)` passes the pieces of `start`..`end` to `sink`, in order. You can render several ranges, and they may overlap. A range renders the code of its chars: the before of each wrap that starts in it, the after of each wrap that ends in it, and the code at an empty range at one of its chars. A range that ends at the end of the text also renders the code at the end, so `render(0, 0)` of an empty source renders all its code. An empty range inside the text renders no code.
 
 </details>
 
@@ -503,7 +463,7 @@ type Piece<Origin = unknown> = string | (Origin & { start: number; end: number; 
 - A range with `text` is generated text that stands for `start`..`end`.
 - `start` and `end` are integers, with 0 ≤ `start` ≤ `end` ≤ the length of the `content` of the source. `renderWithSourceMap` throws on a range that breaks this or has no source, when the range reaches its sink. `rewritePieceText` throws on such a range without `text`, as it reads the source only for kept text. A rewrite checks the offsets of its own edits, cuts and views when you call them, and passes the ranges you write as code on as they are.
 
-The ranges of a rewrite also carry their `source` and the fields of `Data`. Kept text gets the `data` passed to `render` or `cut`. The ranges you write carry what you put on them, like `name` in the source map example. `rewritePieceText(piece)` gives the text of any piece. A producer of one source, such as [muggle-pug](https://github.com/johnsoncodehk/muggle-pug), can emit plain `Piece` ranges without a `source`.
+The ranges of a rewrite also carry their `source` and the fields of `Data`. Kept text gets the `data` passed to `render`, with the fields of its cut over it. The ranges you write carry what you put on them, like `name` in the source map example. `rewritePieceText(piece)` gives the text of any piece. A producer of one source, such as [muggle-pug](https://github.com/johnsoncodehk/muggle-pug), can emit plain `Piece` ranges without a `source`.
 
 To collect the pieces:
 
@@ -551,7 +511,8 @@ for (const { index: start } of source.content.matchAll(/\bname\b/g)) {
 	const end = start + 'name'.length;
 	rewrite.replace(start, end, { source, start, end, text: 'user' });
 }
-rewrite.insertBefore(0, rewrite.cut(source.content.indexOf('const'), source.content.length));
+const at = source.content.indexOf('const');
+rewrite.wrap(0, at, rewrite.cut(at, source.content.length), '');
 
 type Span = { virtualStart: number; virtualEnd: number; originalStart: number; originalEnd: number; kind: 'Verbatim' | 'Atom' };
 
