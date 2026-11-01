@@ -21,13 +21,17 @@ export type RewriteCutOptions<S extends Source, Data = {}> = Partial<Data> & {
 	placeholder?: RewriteCode<S, Data>;
 };
 
-export interface RewriteSlice<S extends Source, Data = {}> {
+/** A slice whose cut sets the fields `Given`, so rendering it by itself takes data only for the fields it leaves. */
+export interface RewriteSlice<S extends Source, Data = {}, Given = {}> {
 	/**
 	 * Passes the pieces of the slice to `sink`, in order: no string is empty, and kept text is a range without `text`,
 	 * with the fields of `data` and over them those of the cut. Placed in code, a slice renders with the data of the
 	 * code.
 	 */
-	render(sink: (piece: Piece<RewriteOrigin<S, Data>>) => void, ...data: {} extends Data ? [data?: Data] : [data: Data]): void;
+	render(
+		sink: (piece: Piece<RewriteOrigin<S, Data>>) => void,
+		...data: {} extends Omit<Data, keyof Given> ? [data?: Data] : [data: Data]
+	): void;
 }
 
 /**
@@ -72,7 +76,11 @@ export interface SourceRewrite<S extends Source, Data = {}> {
 	 *
 	 * A slice that is placed in code that only its own render renders, as in its own range, throws when it renders.
 	 */
-	cut(start: number, end: number, options?: RewriteCutOptions<S, Data>): RewriteSlice<S, Data>;
+	cut<const Options extends RewriteCutOptions<S, Data> = {}>(
+		start: number,
+		end: number,
+		options?: Options,
+	): RewriteSlice<S, Data, Omit<Options, 'placeholder'>>;
 	/**
 	 * Passes the pieces of the text at `start`..`end`, with the edits in it, to `sink`, kept text with the fields of
 	 * `data`: a view, which owns no text, so views can overlap and render again. It renders the code of the chars in

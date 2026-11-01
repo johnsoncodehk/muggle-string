@@ -108,7 +108,17 @@ rewrite.render(0, 7, piece => {
 }, { view: 'main', moved: false });
 console.log(parts.join(' '));
 // f(@main b@main+moved a, @main )@main
+
+const other = createSourceRewrite<typeof source, { view: string; moved: boolean }>(source);
+other.cut(2, 3, { view: 'alone', moved: true }).render(piece => {
+	if (typeof piece !== 'string') {
+		console.log(rewritePieceText(piece), piece.view);
+	}
+});
+// a alone
 ```
+
+A slice rendered by itself takes data for the fields its cut does not set, so a cut that sets them all renders without data.
 
 To wrap a range where it is, wrap it instead of cutting it.
 
@@ -435,7 +445,7 @@ The baselines are the 0.4 segment array, whose every edit scans and splits the s
 - Offsets of edits, cuts and views that are not integers in 0..the length of the content throw.
 - `rewrite.cut(start, end, options)` takes a range out and returns a slice. The slice renders the range, with every edit inside it, where you place it. `options.placeholder` renders where the range was.
 - Cuts can be made in any order. A cut inside another moves with it. A cut that crosses another throws, naming both ranges. A wrap that crosses a cut throws when it renders.
-- Kept text of a slice gets the data of the code it renders in, with the other fields of `options` over it.
+- Kept text of a slice gets the data of the code it renders in, with the other fields of `options` over it. Rendered by itself, a slice takes data only for the fields that its cut does not set.
 - A slice renders wherever and as often as it is placed and rendered, as a view does. A slice placed inside its own range, also by a wrap that starts at its start, throws when it renders. `rewrite.unrendered()` lists the slices that have not rendered yet.
 - A render renders the edits made before it, so an edit after a render shows in the next one. An edit while a render runs, such as from its sink, throws. A render after the content of the source changed throws.
 
