@@ -232,7 +232,7 @@ wrap('pre-order with ranks');
 // (x[y]) pre-order with ranks
 ```
 
-To wrap nested nodes, write the open code when you enter a node and the close code when you leave it: the closes of nodes that end at one position then come inner first, in call order. If you write each open and close together, in pre-order, the closes come outer first; give the writer of each depth a higher rank outside.
+To wrap nested nodes, write the open code when you enter a node and the close code when you leave it: the closes of nodes that end at one position then come inner first, in call order. If you write each open and close together, in pre-order, the closes come outer first; give each depth its own writer, with a higher rank further out.
 
 #### Zero-width positions
 
@@ -382,6 +382,8 @@ catch (error) {
 ```
 
 `insertBefore(2, …)` attaches to the first char of the cut, so a slice placed at its own start is inside itself.
+
+An edit that throws changes nothing, but the edits before it stay, so discard the rewrite after a throw. What the first render throws, every later render throws again.
 
 #### Source maps
 
