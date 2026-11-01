@@ -100,8 +100,7 @@ export function createSourceRewrite<
 		...rewrite.core,
 		source,
 		writer: rank => rewrite.writer(rank),
-		cut: (start: number, end: number, options?: RewriteCutOptions<Source, Data>) =>
-			rewrite.cut(start, end, (options ?? {}) as RewriteCutOptions<Source, Data>),
+		cut: (start: number, end: number, options?: RewriteCutOptions<Source, Data>) => rewrite.cut(start, end, options),
 		render: (start: number, end: number, sink: Sink<Source, Data>, data?: Data) =>
 			rewrite.render(start, end, data ?? {} as Data, sink),
 		unrendered: () => rewrite.cuts.filter(cut => cut.state === CutState.Unrendered),
@@ -160,23 +159,6 @@ class Edits<Source extends RewriteSource, Data> {
 		this.code.push(code);
 	}
 
-	/** The first index from `low` whose anchor is at or after the char `offset`. */
-	lowerBound(offset: number, low: number) {
-		const keys = this.keys;
-		const key = offset * 4;
-		let high = this.code.length;
-		while (low < high) {
-			const mid = (low + high) >>> 1;
-			if (keys[mid]! < key) {
-				low = mid + 1;
-			}
-			else {
-				high = mid;
-			}
-		}
-		return low;
-	}
-
 	/** Sorts the edits, which usually arrive in order. */
 	sort() {
 		if (this.sorted) {
@@ -205,8 +187,6 @@ class Rewrite<Source extends RewriteSource, Data> {
 	readonly core: RewriteWriter<Source, Data>;
 	/** The edits of each writer, by rank. */
 	edits = new Map<number, Edits<Source, Data>>();
-	/** When frozen, the edits of each writer that has some, sorted. */
-	writerEdits: Edits<Source, Data>[] = [];
 	/** Removed ranges as flat start, end pairs; sorted and merged when frozen. */
 	removals = new Int32Array(16);
 	removalsSize = 0;
@@ -219,6 +199,9 @@ class Rewrite<Source extends RewriteSource, Data> {
 	frozen = false;
 	/** What the first render threw, which every render throws. */
 	error: unknown;
+	/** When frozen, the keys and code of the edits of all writers, in render order. */
+	keys: Int32Array = new Int32Array(0);
+	code: RewriteCode<Source, Data>[] = [];
 
 	constructor(readonly source: Source) {
 		this.core = this.createEdits(coreRank).writer;
@@ -259,33 +242,48 @@ class Rewrite<Source extends RewriteSource, Data> {
 		if (this.frozen) {
 			throw new Error('The rewrite is already rendered.');
 		}
-		checkRange(start, end, 0, this.source.content.length, `${start === end ? `The offset ${start}` : `The range ${start}..${end}`} is out of 0..${this.source.content.length}.`);
+		const { length } = this.source.content;
+		if (!isRange(start, end, length)) {
+			throw new RangeError(`${start === end ? `The offset ${start}` : `The range ${start}..${end}`} is out of 0..${length}.`);
+		}
 	}
 
 	/**
 	 * The cut of `start`..`end`, inside the innermost cut that holds the range, around the cuts in the range; the cuts
 	 * of each level stay sorted and disjoint.
 	 */
-	cut(start: number, end: number, { placeholder, ...data }: RewriteCutOptions<Source, Data>) {
+	cut(start: number, end: number, options: RewriteCutOptions<Source, Data> | undefined) {
 		if (this.frozen) {
 			throw new Error('The rewrite is already rendered.');
 		}
-		checkRange(start, end, 0, this.source.content.length, `The range ${start}..${end} is out of 0..${this.source.content.length}.`);
+		const { length } = this.source.content;
+		if (!isRange(start, end, length)) {
+			throw new RangeError(`The range ${start}..${end} is out of 0..${length}.`);
+		}
 		if (start === end) {
 			throw new RangeError(`The cut at ${start} moves no char.`);
+		}
+		let placeholder: RewriteCode<Source, Data> | undefined;
+		let data = {} as Data;
+		if (options) {
+			({ placeholder, ...data as {} } = options);
 		}
 		let parent: Cut<Source, Data> | undefined;
 		let siblings = this.roots;
 		while (true) {
-			let low = 0;
-			let high = siblings.length;
-			while (low < high) {
-				const mid = (low + high) >>> 1;
-				if (siblings[mid]!.end <= start) {
-					low = mid + 1;
-				}
-				else {
-					high = mid;
+			let low = siblings.length;
+			// cuts usually come in order, after all of their level
+			if (low && siblings[low - 1]!.end > start) {
+				low = 0;
+				let high = siblings.length;
+				while (low < high) {
+					const mid = (low + high) >>> 1;
+					if (siblings[mid]!.end <= start) {
+						low = mid + 1;
+					}
+					else {
+						high = mid;
+					}
 				}
 			}
 			const first = siblings[low];
@@ -301,12 +299,17 @@ class Rewrite<Source extends RewriteSource, Data> {
 					throw new RangeError(`The cut ${start}..${end} crosses ${nameCut(inner).toLowerCase()}.`);
 				}
 			}
-			const cut = new Cut<Source, Data>(this, parent, start, end, data as Data, placeholder);
-			const held = siblings.splice(low, last - low, cut);
-			if (held.length) {
-				cut.children = held;
-				for (const inner of held) {
-					inner.parent = cut;
+			const cut = new Cut<Source, Data>(this, parent, start, end, data, placeholder);
+			if (last === siblings.length && low === last) {
+				siblings.push(cut);
+			}
+			else {
+				const held = siblings.splice(low, last - low, cut);
+				if (held.length) {
+					cut.children = held;
+					for (const inner of held) {
+						inner.parent = cut;
+					}
 				}
 			}
 			this.cuts.push(cut);
@@ -317,14 +320,123 @@ class Rewrite<Source extends RewriteSource, Data> {
 	/** The view `start`..`end`. */
 	render(start: number, end: number, data: Data, sink: (piece: Piece<RewriteOrigin<Source, Data>>) => void) {
 		const { length } = this.source.content;
-		checkRange(start, end, 0, length, `The range ${start}..${end} is out of 0..${length}.`);
+		if (!isRange(start, end, length)) {
+			throw new RangeError(`The range ${start}..${end} is out of 0..${length}.`);
+		}
 		this.freeze();
+		const { roots, keys, removals } = this;
+		let index = 0;
+		let high = roots.length;
+		while (index < high) {
+			const mid = (index + high) >>> 1;
+			if (roots[mid]!.end <= start) {
+				index = mid + 1;
+			}
+			else {
+				high = mid;
+			}
+		}
+		let pos = start;
+		// a view skips the cut that it starts inside
+		const first = roots[index];
+		if (first && first.start < start) {
+			pos = first.end < end ? first.end : end;
+			index++;
+		}
+		let edit = 0;
+		if (start) {
+			high = this.code.length;
+			while (edit < high) {
+				const mid = (edit + high) >>> 1;
+				if (keys[mid]! < pos * 4) {
+					edit = mid + 1;
+				}
+				else {
+					high = mid;
+				}
+			}
+		}
+		let removal = 0;
+		high = this.removalsSize >> 1;
+		while (removal < high) {
+			const mid = (removal + high) >>> 1;
+			if (removals[2 * mid + 1]! <= pos) {
+				removal = mid + 1;
+			}
+			else {
+				high = mid;
+			}
+		}
 		renderDepth++;
 		try {
-			renderRange(this, new Walker(this, sink), start, end, this.roots, data, start === 0, end === length);
+			this.renderSpan(pos, end, edit, removal * 2, roots, index, data, sink, end === length);
 		}
 		finally {
 			renderDepth--;
+		}
+	}
+
+	/**
+	 * The text from `pos` to `end` with the edits in it, from the edit `edit` and the removal `removal` on, but for the
+	 * text of `children`, the cuts in it from `index`, sorted and disjoint: their placeholders render in their place.
+	 * Kept text has the fields of `data`, and `tail` renders the code after all text.
+	 */
+	renderSpan(
+		pos: number,
+		end: number,
+		edit: number,
+		removal: number,
+		children: readonly Cut<Source, Data>[] | undefined,
+		index: number,
+		data: Data,
+		sink: (piece: Piece<RewriteOrigin<Source, Data>>) => void,
+		tail: boolean,
+	) {
+		const { keys, code, removals, removalsSize, source } = this;
+		const count = code.length;
+		while (true) {
+			const child = children?.[index];
+			const stop = child && child.start < end ? child.start : end;
+			const last = stop * 4;
+			while (true) {
+				// no key is below -4, the key of the code before all text
+				const key = edit < count && keys[edit]! < last ? keys[edit]! : -8;
+				const to = key === -8 ? stop : (key >> 2) + ((key & 3) === Side.After ? 1 : 0);
+				while (pos < to) {
+					while (removal < removalsSize && removals[removal + 1]! <= pos) {
+						removal += 2;
+					}
+					if (removal < removalsSize && removals[removal]! <= pos) {
+						pos = removals[removal + 1]! < to ? removals[removal + 1]! : to;
+						continue;
+					}
+					const runEnd = removal < removalsSize && removals[removal]! < to ? removals[removal]! : to;
+					sink({ ...data, source, start: pos, end: runEnd });
+					pos = runEnd;
+				}
+				if (key === -8) {
+					break;
+				}
+				renderCode(code[edit++]!, sink);
+			}
+			if (stop === end) {
+				break;
+			}
+			if (child!.placeholder !== undefined) {
+				renderCode(child!.placeholder, sink);
+			}
+			if (child!.end > end) {
+				return;
+			}
+			pos = child!.end;
+			edit = child!.endEdit;
+			removal = child!.endRemoval;
+			index++;
+		}
+		if (tail) {
+			while (edit < count) {
+				renderCode(code[edit++]!, sink);
+			}
 		}
 	}
 
@@ -351,13 +463,13 @@ class Rewrite<Source extends RewriteSource, Data> {
 			return;
 		}
 		this.frozen = true;
-		this.writerEdits = [...this.edits.values()].filter(edits => edits.code.length);
-		for (const edits of this.writerEdits) {
+		const writers = [...this.edits.values()].filter(edits => edits.code.length);
+		for (const edits of writers) {
 			edits.sort();
 		}
 		this.mergeRemovals();
 		try {
-			this.checkPlacements();
+			this.compile(writers);
 		}
 		catch (error) {
 			this.error = error;
@@ -366,116 +478,94 @@ class Rewrite<Source extends RewriteSource, Data> {
 	}
 
 	/**
-	 * Throws for a cut that only its own render would render: placed in code that it renders, directly or through the
-	 * cuts placed in it. Code at a char renders in the innermost cut that owns the char, and a placeholder in the cut
-	 * around its own.
+	 * Merges the edits of all writers in render order, and finds where the edits and the removals of each cut start and
+	 * end, and the cut that owns each edit, in one walk of the cuts in the order of their starts and ends. Then checks
+	 * the placements of the cuts.
 	 */
-	private checkPlacements() {
+	private compile(writers: Edits<Source, Data>[]) {
+		const [keys, code, positions] = mergeEdits(writers);
+		this.keys = keys;
+		this.code = code;
 		if (!this.cuts.length) {
 			return;
 		}
+		const count = code.length;
+		const { removals, removalsSize } = this;
+		/** The cut that owns each edit, by its index in `code`. */
+		const owners: (Cut<Source, Data> | undefined)[] = [];
+		let edit = 0;
+		let removal = 0;
+		/** The cuts entered and not left but the innermost, `owner`, each with the index of its next child. */
+		const path: (Cut<Source, Data> | undefined)[] = [];
+		const nextChild: number[] = [];
+		let owner: Cut<Source, Data> | undefined;
+		let children: Cut<Source, Data>[] | undefined = this.roots;
+		let index = 0;
+		while (true) {
+			const child: Cut<Source, Data> | undefined = children?.[index];
+			// enters the next child, or leaves the cut
+			const at = child ? child.start : owner ? owner.end : Infinity;
+			for (; edit < count && keys[edit]! < at * 4; edit++) {
+				owners.push(owner);
+			}
+			for (; removal < removalsSize && removals[removal + 1]! <= at; removal += 2);
+			if (child) {
+				child.firstEdit = edit;
+				child.firstRemoval = removal;
+				path.push(owner);
+				nextChild.push(index + 1);
+				owner = child;
+				children = child.children;
+				index = 0;
+				continue;
+			}
+			if (!owner) {
+				break;
+			}
+			owner.endEdit = edit;
+			owner.endRemoval = removal;
+			owner = path.pop();
+			index = nextChild.pop()!;
+			children = owner ? owner.children : this.roots;
+		}
 		/** The cuts that have renderers. */
 		const placed: Cut<Source, Data>[] = [];
-		const held: Cut<Source, Data>[] = [];
-		const collect = (code: RewriteCode<Source, Data>) => {
+		/** The cuts placed in `code`, which `renderer` renders; a view is no renderer. */
+		const place = (code: RewriteCode<Source, Data>, renderer: Cut<Source, Data>) => {
 			if (typeof code === 'string') {
 				return;
 			}
 			if (isCodeArray<Source, Data>(code)) {
 				for (let index = 0; index < code.length; index++) {
-					collect(code[index]!);
+					place(code[index]!, renderer);
 				}
 			}
 			else if (code instanceof Cut && code.rewrite === this) {
-				held.push(code);
-			}
-		};
-		const place = (renderer: Cut<Source, Data> | undefined) => {
-			if (renderer) {
-				for (const cut of held) {
-					if (cut.renderers) {
-						cut.renderers.push(renderer);
-					}
-					else {
-						cut.renderers = [renderer];
-						placed.push(cut);
-					}
+				if (code.renderers) {
+					code.renderers.push(renderer);
+				}
+				else {
+					code.renderers = [renderer];
+					placed.push(code);
 				}
 			}
-			held.length = 0;
 		};
-		for (const { keys, code } of this.writerEdits) {
-			for (let index = 0; index < code.length; index++) {
-				collect(code[index]!);
-				if (held.length) {
-					place(this.ownerOf(keys[index]! >> 2));
+		// by writer and in the order of each, which decides the cut that the error of a cycle names
+		for (let writer = 0; writer < writers.length; writer++) {
+			const edits = writers[writer]!;
+			for (let index = 0; index < edits.code.length; index++) {
+				const owner = owners[positions ? positions[writer]![index]! : index];
+				if (owner) {
+					place(edits.code[index]!, owner);
 				}
 			}
 		}
 		for (const cut of this.cuts) {
-			if (cut.placeholder !== undefined) {
-				collect(cut.placeholder);
-				place(cut.parent);
+			if (cut.placeholder !== undefined && cut.parent) {
+				place(cut.placeholder, cut.parent);
 			}
 		}
-		/** The walked cuts, each with the index of its next renderer. */
-		const path: Cut<Source, Data>[] = [];
-		const next: number[] = [];
-		for (const first of placed) {
-			if (first.visit) {
-				continue;
-			}
-			first.visit = Visit.Walking;
-			path.push(first);
-			next.push(0);
-			while (path.length) {
-				const top = path.length - 1;
-				const renderers = path[top]!.renderers;
-				if (!renderers || next[top] === renderers.length) {
-					path.pop()!.visit = Visit.Done;
-					next.pop();
-					continue;
-				}
-				const renderer = renderers[next[top]!++]!;
-				if (renderer.visit === Visit.Walking) {
-					throw new Error(`${nameCut(renderer)} is placed inside itself, so it never renders.`);
-				}
-				if (!renderer.visit) {
-					renderer.visit = Visit.Walking;
-					path.push(renderer);
-					next.push(0);
-				}
-			}
-		}
-	}
-
-	/**
-	 * The cut that renders the code at the char `at`, none for a view: -1 is before all text, and the length after all
-	 * text, which no cut owns.
-	 */
-	private ownerOf(at: number) {
-		let owner: Cut<Source, Data> | undefined;
-		let siblings: Cut<Source, Data>[] | undefined = at === -1 || at === this.source.content.length ? undefined : this.roots;
-		while (siblings) {
-			let low = 0;
-			let high = siblings.length;
-			while (low < high) {
-				const mid = (low + high) >>> 1;
-				if (siblings[mid]!.end <= at) {
-					low = mid + 1;
-				}
-				else {
-					high = mid;
-				}
-			}
-			const sibling: Cut<Source, Data> | undefined = siblings[low];
-			if (!sibling || sibling.start > at) {
-				break;
-			}
-			owner = sibling;
-			siblings = sibling.children;
-		}
-		return owner;
+		checkRenderers(placed);
 	}
 
 	private mergeRemovals() {
@@ -513,6 +603,105 @@ class Rewrite<Source extends RewriteSource, Data> {
 	}
 }
 
+/**
+ * The keys and code of all writers, in render order: at one side of one char, the code before the text goes outermost
+ * (highest rank) first, and the code in the place of the char and after the text innermost first. With more than one
+ * writer, also the merged index of each edit of each writer.
+ */
+function mergeEdits<Source extends RewriteSource, Data>(
+	writers: Edits<Source, Data>[],
+): [Int32Array, RewriteCode<Source, Data>[], Int32Array[]?] {
+	if (writers.length < 2) {
+		return writers.length ? [writers[0]!.keys, writers[0]!.code] : [new Int32Array(0), []];
+	}
+	let total = 0;
+	for (const edits of writers) {
+		total += edits.code.length;
+	}
+	const keys = new Int32Array(total);
+	const merged: RewriteCode<Source, Data>[] = [];
+	const positions = writers.map(edits => new Int32Array(edits.code.length));
+	const next = writers.map(() => 0);
+	while (true) {
+		let best = -1;
+		let bestKey = Infinity;
+		// the first key of the other writers, up to which the best one adds its run
+		let bound = Infinity;
+		for (let writer = 0; writer < writers.length; writer++) {
+			const { keys, code, rank } = writers[writer]!;
+			const edit = next[writer]!;
+			if (edit < code.length) {
+				const key = keys[edit]!;
+				if (
+					key < bestKey || (key === bestKey && best !== -1 && (
+						(key & 3) === Side.Before ? rank > writers[best]!.rank : rank < writers[best]!.rank
+					))
+				) {
+					if (best !== -1) {
+						bound = bestKey;
+					}
+					best = writer;
+					bestKey = key;
+				}
+				else if (key < bound) {
+					bound = key;
+				}
+			}
+		}
+		if (best === -1) {
+			return [keys, merged, positions];
+		}
+		const edits = writers[best]!;
+		const position = positions[best]!;
+		let edit = next[best]!;
+		// an edit at `bound` itself may lose to the other writer there: it is chosen again
+		do {
+			position[edit] = merged.length;
+			keys[merged.length] = edits.keys[edit]!;
+			merged.push(edits.code[edit++]!);
+		}
+		while (edit < edits.code.length && edits.keys[edit]! < bound);
+		next[best] = edit;
+	}
+}
+
+/**
+ * Throws for a cut that only its own render would render: placed in code that it renders, directly or through the
+ * cuts placed in it. Code at a char renders in the innermost cut that owns the char, and a placeholder in the cut
+ * around its own.
+ */
+function checkRenderers<Source extends RewriteSource, Data>(placed: Cut<Source, Data>[]) {
+	/** The walked cuts, each with the index of its next renderer. */
+	const path: Cut<Source, Data>[] = [];
+	const next: number[] = [];
+	for (const first of placed) {
+		if (first.visit) {
+			continue;
+		}
+		first.visit = Visit.Walking;
+		path.push(first);
+		next.push(0);
+		while (path.length) {
+			const top = path.length - 1;
+			const renderers = path[top]!.renderers;
+			if (!renderers || next[top] === renderers.length) {
+				path.pop()!.visit = Visit.Done;
+				next.pop();
+				continue;
+			}
+			const renderer = renderers[next[top]!++]!;
+			if (renderer.visit === Visit.Walking) {
+				throw new Error(`${nameCut(renderer)} is placed inside itself, so it never renders.`);
+			}
+			if (!renderer.visit) {
+				renderer.visit = Visit.Walking;
+				path.push(renderer);
+				next.push(0);
+			}
+		}
+	}
+}
+
 // the walk of the renderers of the cuts, which finds a cut that leads back to itself
 const enum Visit {
 	Unvisited,
@@ -534,10 +723,8 @@ function nameCut(cut: { start: number; end: number }) {
 	return `The cut ${cut.start}..${cut.end}`;
 }
 
-function checkRange(start: number, end: number, min: number, max: number, message: string) {
-	if (!Number.isInteger(start) || !Number.isInteger(end) || start < min || start > end || end > max) {
-		throw new RangeError(message);
-	}
+function isRange(start: number, end: number, length: number) {
+	return Number.isInteger(start) && Number.isInteger(end) && start >= 0 && start <= end && end <= length;
 }
 
 class Cut<Source extends RewriteSource, Data> implements RewriteSlice<Source, Data> {
@@ -547,6 +734,11 @@ class Cut<Source extends RewriteSource, Data> implements RewriteSlice<Source, Da
 	renderers: Cut<Source, Data>[] | undefined;
 	visit = Visit.Unvisited;
 	state = CutState.Unrendered;
+	/** When frozen, the indexes of the edits and removals of the rewrite at its start and at its end. */
+	firstEdit = 0;
+	firstRemoval = 0;
+	endEdit = 0;
+	endRemoval = 0;
 
 	constructor(
 		readonly rewrite: Rewrite<Source, Data>,
@@ -573,184 +765,13 @@ class Cut<Source extends RewriteSource, Data> implements RewriteSlice<Source, Da
 		this.state = CutState.Rendering;
 		renderDepth++;
 		try {
-			renderRange(this.rewrite, new Walker(this.rewrite, sink), this.start, this.end, this.children ?? [], this.data, false, false);
+			const { start, end, firstEdit, firstRemoval, children, data } = this;
+			this.rewrite.renderSpan(start, end, firstEdit, firstRemoval, children, 0, data, sink, false);
 		}
 		finally {
 			renderDepth--;
 			this.state = byItself ? CutState.RenderedByItself : CutState.Placed;
 		}
-	}
-}
-
-/** The state of one render: the sink, and the position in the text and in the removals. */
-class Walker<Source extends RewriteSource, Data> {
-	readonly source: Source;
-	readonly removals: Int32Array;
-	readonly removalsSize: number;
-	pos = 0;
-	/** The first removal that ends after `pos`. */
-	removal = 0;
-
-	constructor(rewrite: Rewrite<Source, Data>, readonly sink: (piece: Piece<RewriteOrigin<Source, Data>>) => void) {
-		this.source = rewrite.source;
-		this.removals = rewrite.removals;
-		this.removalsSize = rewrite.removalsSize;
-	}
-
-	/** Moves to `pos`, in a cut whose kept chars start there. */
-	seek(pos: number) {
-		const removals = this.removals;
-		let low = 0;
-		let high = this.removalsSize >> 1;
-		while (low < high) {
-			const mid = (low + high) >>> 1;
-			if (removals[2 * mid + 1]! <= pos) {
-				low = mid + 1;
-			}
-			else {
-				high = mid;
-			}
-		}
-		this.pos = pos;
-		this.removal = low * 2;
-	}
-
-	/** The kept chars from `pos` to `to`, with the fields of `data`. */
-	keep(to: number, data: Data) {
-		const { removals, removalsSize: size, sink, source } = this;
-		let { pos, removal } = this;
-		while (pos < to) {
-			while (removal < size && removals[removal + 1]! <= pos) {
-				removal += 2;
-			}
-			if (removal < size && removals[removal]! <= pos) {
-				pos = removals[removal + 1]! < to ? removals[removal + 1]! : to;
-				continue;
-			}
-			const stop = removal < size && removals[removal]! < to ? removals[removal]! : to;
-			sink({ ...data, source, start: pos, end: stop });
-			pos = stop;
-		}
-		this.pos = pos;
-		this.removal = removal;
-	}
-}
-
-/**
- * The text at `start`..`end` with the edits in it, but for the text of `children`, the cuts in it, sorted and
- * disjoint, of which a view skips the one that it starts inside; their placeholders render in their place. `head` and
- * `tail` render the code before and after all text.
- */
-function renderRange<Source extends RewriteSource, Data>(
-	rewrite: Rewrite<Source, Data>,
-	walker: Walker<Source, Data>,
-	start: number,
-	end: number,
-	children: readonly Cut<Source, Data>[],
-	data: Data,
-	head: boolean,
-	tail: boolean,
-) {
-	const writers = rewrite.writerEdits;
-	let index = 0;
-	let high = children.length;
-	while (index < high) {
-		const mid = (index + high) >>> 1;
-		if (children[mid]!.end <= start) {
-			index = mid + 1;
-		}
-		else {
-			high = mid;
-		}
-	}
-	let pos = start;
-	const first = children[index];
-	if (first && first.start < start) {
-		pos = first.end < end ? first.end : end;
-		index++;
-	}
-	walker.seek(pos);
-	/** The next edit of each writer. */
-	const next: number[] = [];
-	for (const edits of writers) {
-		next.push(head ? 0 : edits.lowerBound(pos, 0));
-	}
-	for (;; index++) {
-		const child = children[index];
-		const stop = child && child.start < end ? child.start : end;
-		renderEdits(writers, next, stop * 4, walker, data, true);
-		walker.keep(stop, data);
-		if (stop === end) {
-			break;
-		}
-		if (child!.placeholder !== undefined) {
-			renderCode(child!.placeholder, walker.sink);
-		}
-		pos = child!.end < end ? child!.end : end;
-		walker.seek(pos);
-		for (let writer = 0; writer < writers.length; writer++) {
-			next[writer] = writers[writer]!.lowerBound(pos, next[writer]!);
-		}
-	}
-	if (tail) {
-		renderEdits(writers, next, Infinity, walker, data, false);
-	}
-}
-
-/**
- * The edits of all writers from `next` to the key `last`, in render order: at one side of one char, the code before
- * the text goes outermost (highest rank) first, and the code in the place of the char and after the text innermost
- * first. With `keep`, the kept text up to the anchor of each, with `data`, before it.
- */
-function renderEdits<Source extends RewriteSource, Data>(
-	writers: Edits<Source, Data>[],
-	next: number[],
-	last: number,
-	walker: Walker<Source, Data>,
-	data: Data,
-	keep: boolean,
-) {
-	while (true) {
-		let best = -1;
-		let bestKey = last;
-		// the first key of the other writers, up to which the best one renders its run
-		let bound = last;
-		for (let writer = 0; writer < writers.length; writer++) {
-			const { keys, code, rank } = writers[writer]!;
-			const edit = next[writer]!;
-			if (edit < code.length) {
-				const key = keys[edit]!;
-				if (
-					key < bestKey || (key === bestKey && best !== -1 && (
-						(key & 3) === Side.Before ? rank > writers[best]!.rank : rank < writers[best]!.rank
-					))
-				) {
-					if (best !== -1) {
-						bound = bestKey;
-					}
-					best = writer;
-					bestKey = key;
-				}
-				else if (key < bound) {
-					bound = key;
-				}
-			}
-		}
-		if (best === -1) {
-			return;
-		}
-		const { keys, code } = writers[best]!;
-		let edit = next[best]!;
-		// an edit at `bound` itself may lose to the other writer there: it is chosen again
-		do {
-			const key = keys[edit]!;
-			if (keep) {
-				walker.keep((key >> 2) + ((key & 3) === Side.After ? 1 : 0), data);
-			}
-			renderCode(code[edit++]!, walker.sink);
-		}
-		while (edit < code.length && keys[edit]! < bound);
-		next[best] = edit;
 	}
 }
 
