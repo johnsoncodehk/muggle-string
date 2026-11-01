@@ -13,7 +13,7 @@ const base64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/
 
 // Made at the first call that needs them, so that importing the module only defines its functions and constants.
 let base64Codes: Uint8Array | undefined;
-let decoder: { decode(input: Uint8Array): string } | false | undefined;
+let decoder: { decode(input: Uint8Array): string } | undefined;
 let space: RegExp | undefined;
 let word: RegExp | undefined;
 
@@ -43,6 +43,8 @@ export function renderWithSourceMap<Source extends RewriteSource>(
 	render: (sink: (piece: Piece<{ source: Source; name?: string }>) => void) => void,
 	name: (source: Source) => string,
 ): { text: string; map: SourceMap } {
+	// before the render, which may render slices that render only once
+	const latin1 = decoder ??= createDecoder();
 	const sources = new Map<Source, { index: number; lineStarts: number[] }>();
 	const map: SourceMap = { version: 3, sources: [], sourcesContent: [], names: [], mappings: '' };
 	let text = '';
@@ -77,7 +79,7 @@ export function renderWithSourceMap<Source extends RewriteSource>(
 	// A segment takes at most a comma and five fields of 7 digits.
 	const reserve = () => {
 		if (length > chunkSize - 36) {
-			chunks.push(decode(buffer, length));
+			chunks.push(latin1.decode(buffer.subarray(0, length)));
 			length = 0;
 		}
 	};
@@ -225,7 +227,7 @@ export function renderWithSourceMap<Source extends RewriteSource>(
 		pieceName = undefined;
 	});
 
-	chunks.push(decode(buffer, length));
+	chunks.push(latin1.decode(buffer.subarray(0, length)));
 	const mappings = chunks.join('');
 	// Node reads a segment without a source that ends the mappings as one that keeps the source position before it
 	map.mappings = endsWithoutSource ? mappings + ';' : mappings;
@@ -234,19 +236,14 @@ export function renderWithSourceMap<Source extends RewriteSource>(
 
 declare const TextDecoder: (new(label: string) => { decode(input: Uint8Array): string }) | undefined;
 
-/** The ASCII text of the first `length` bytes of `bytes`. */
-function decode(bytes: Uint8Array, length: number) {
-	if (decoder === undefined) {
-		decoder = typeof TextDecoder === 'function' ? new TextDecoder('latin1') : false;
+/** The decoder of the ASCII digits of the mappings, from the `TextDecoder` of the WHATWG Encoding Standard. */
+function createDecoder() {
+	if (typeof TextDecoder !== 'function') {
+		throw new Error(
+			'renderWithSourceMap needs the global TextDecoder of the WHATWG Encoding Standard, which is not defined here.',
+		);
 	}
-	if (decoder) {
-		return decoder.decode(bytes.subarray(0, length));
-	}
-	let code = '';
-	for (let start = 0; start < length; start += 4096) {
-		code += String.fromCharCode(...bytes.subarray(start, Math.min(length, start + 4096)));
-	}
-	return code;
+	return new TextDecoder('latin1');
 }
 
 function classOf(content: string, offset: number, code: number) {

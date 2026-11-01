@@ -254,21 +254,16 @@ describe('renderWithSourceMap', () => {
 		}
 	});
 
-	test('mappings are the same where no TextDecoder is defined', async () => {
-		const pieces: TestPiece[] = [
-			{ source: main, start: 13, end: 21 },
-			{ source: main, start: 6, end: 7, text: 'b', name: 'a' },
-			{ source: main, start: 0, end: 13 },
-		];
-		const long: TestSource = { name: 'long.js', content: 'ab c;\n'.repeat(4000) };
-		const longPieces: TestPiece[] = [{ source: long, start: 0, end: long.content.length }];
+	test('where no TextDecoder is defined, the first call throws before it renders', async () => {
 		vi.stubGlobal('TextDecoder', undefined);
 		vi.resetModules();
 		try {
 			const { renderWithSourceMap: withoutDecoder } = await import('../src/sourceMap');
-			for (const each of [pieces, longPieces]) {
-				expect(withoutDecoder<TestSource>(sink => each.forEach(sink), source => source.name)).toEqual(render(each));
-			}
+			const rendered = vi.fn();
+			expect(() => withoutDecoder<TestSource>(rendered, source => source.name)).toThrow(
+				'renderWithSourceMap needs the global TextDecoder of the WHATWG Encoding Standard, which is not defined here.',
+			);
+			expect(rendered).not.toHaveBeenCalled();
 		}
 		finally {
 			vi.unstubAllGlobals();
