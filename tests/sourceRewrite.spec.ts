@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { describe, expect, test } from 'vitest';
@@ -833,10 +834,23 @@ test('the package imports only its own modules and depends on nothing', () => {
 	for (const file of fs.readdirSync(src)) {
 		const specifiers = [...fs.readFileSync(path.join(src, file), 'utf8').matchAll(/ from '([^']*)';$/gm)];
 		for (const [, specifier] of specifiers) {
-			expect(specifier).toMatch(/^\.\//);
+			expect(specifier).toMatch(/^\.\/\w+\.js$/);
 		}
 	}
 	const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '../package.json'), 'utf8'));
 	expect(pkg.dependencies).toBeUndefined();
 	expect(pkg.peerDependencies).toBeUndefined();
+});
+
+test('the built package is ES modules that Node imports by the package name, with no side effects', () => {
+	const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '../package.json'), 'utf8'));
+	expect(pkg.type).toBe('module');
+	expect(pkg.sideEffects).toBe(false);
+	const { stdout, stderr } = spawnSync(
+		process.execPath,
+		['--input-type=module', '-e', `import * as m from 'muggle-string'; console.log(Object.keys(m).sort().join())`],
+		{ cwd: path.join(__dirname, '..'), encoding: 'utf8' },
+	);
+	expect(stderr).toBe('');
+	expect(stdout.trim()).toBe('createSourceRewrite,renderWithSourceMap,rewritePieceText');
 });

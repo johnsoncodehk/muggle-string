@@ -1,4 +1,4 @@
-import type { Piece, RewriteSource } from './types';
+import type { Piece, RewriteSource } from './types.js';
 
 /**
  * What a range of a rewrite carries beyond its offsets: its source, and the fields of the consumer that the view or the

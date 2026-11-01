@@ -1,3 +1,3 @@
-export * from './sourceMap';
-export * from './sourceRewrite';
-export * from './types';
+export * from './sourceMap.js';
+export * from './sourceRewrite.js';
+export type * from './types.js';

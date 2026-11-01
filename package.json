@@ -2,8 +2,14 @@
 	"name": "muggle-string",
 	"version": "1.0.0-alpha.4",
 	"description": "Ranked, conflict-free rewrites of a source text, rendered as format-neutral pieces",
-	"main": "out/index.js",
-	"types": "out/index.d.ts",
+	"type": "module",
+	"exports": {
+		".": {
+			"types": "./out/index.d.ts",
+			"default": "./out/index.js"
+		}
+	},
+	"sideEffects": false,
 	"license": "MIT",
 	"files": [
 		"out/**/*.js",

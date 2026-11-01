@@ -12,7 +12,7 @@ muggle-string comes from vuejs/language-tools. There, each Vue single-file compo
 
 ## Usage
 
-1.0 is on the `next` tag: `npm install muggle-string@next`.
+1.0 is on the `next` tag: `npm install muggle-string@next`. It ships as ES modules only. CommonJS code can `require` it on Node 20.19 and later, or 22.12 and later.
 
 ```ts
 import { createSourceRewrite, rewritePieceText } from 'muggle-string';

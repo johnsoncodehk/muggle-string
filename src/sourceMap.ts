@@ -1,4 +1,4 @@
-import type { Piece, RewriteSource } from './types';
+import type { Piece, RewriteSource } from './types.js';
 
 /** A source map of generated text to its sources, in the v3 format. */
 export interface SourceMap {
