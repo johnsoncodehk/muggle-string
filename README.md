@@ -100,6 +100,8 @@ const { text: output, map: sourceMap } = renderWithSourceMap(
 // {"version":3,"sources":["main.js"],"sourcesContent":["log(name);\nconst name = \"Ada\";\n"],"names":["name"],"mappings":"AACA,KAAK,CAACA,IAAI,CAAC,CAAC,CAAC,CAAC,GAAG,CAAC;AADlB,GAAG,CAACA,IAAI,CAAC;"}
 ```
 
+`renderWithSourceMap(render, sourceName)` passes a sink to `render`, and `sourceName` gives the entry of each source in `sources`.
+
 - Kept text maps at the start of each line, word, run of whitespace, and every other char. A word is a run of Unicode letters, marks and digits. Chars like `_`, `$` and `-` map on their own, because languages disagree on whether they belong to a name. A position inside a word maps to the start of the word.
 - The `text` of a range maps to the start of the range.
 - `renderWithSourceMap` needs the global `TextDecoder` of the WHATWG Encoding Standard, as Node and Bun define it. Where it is not defined, the first call throws before it renders.

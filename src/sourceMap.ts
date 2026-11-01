@@ -29,7 +29,7 @@ const enum CharClass {
 
 /**
  * The generated text of the pieces that `render` passes to its sink, and a v3 source map of it to their sources, which
- * `name` names, with their content, in the order that the pieces first reach them. Kept text maps to itself at the
+ * `sourceName` names, with their content, in the order that the pieces first reach them. Kept text maps to itself at the
  * start of each piece, line, word (a run of Unicode letters, marks and digits), run of whitespace and other char, as
  * `_`, `$` and `-`, which syntaxes differ on joining into names, so a position at a token boundary maps exactly in any
  * syntax whose tokens do not start inside such a word;
@@ -41,7 +41,7 @@ const enum CharClass {
  */
 export function renderWithSourceMap<Source extends RewriteSource>(
 	render: (sink: (piece: Piece<{ source: Source; name?: string }>) => void) => void,
-	name: (source: Source) => string,
+	sourceName: (source: Source) => string,
 ): { text: string; map: SourceMap } {
 	// before the render, which may render slices that render only once
 	const latin1 = decoder ??= createDecoder();
@@ -141,7 +141,7 @@ export function renderWithSourceMap<Source extends RewriteSource>(
 			}
 			known = { index: sources.size, lineStarts };
 			sources.set(source, known);
-			map.sources.push(name(source));
+			map.sources.push(sourceName(source));
 			map.sourcesContent.push(content);
 		}
 		return known;
