@@ -9,7 +9,11 @@ export interface SourceMap {
 	mappings: string;
 }
 
-const base64 = Uint8Array.from('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/', char => char.charCodeAt(0));
+const base64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+
+// Made at the first render, so that importing the module does nothing.
+let base64Codes: Uint8Array | undefined;
+let decoder: { decode(input: Uint8Array): string } | false | undefined;
 
 const comma = 44;
 const semicolon = 59;
@@ -39,6 +43,7 @@ export function renderWithSourceMap<Source extends RewriteSource>(
 	const sources = new Map<Source, { index: number; lineStarts: number[] }>();
 	const map: SourceMap = { version: 3, sources: [], sourcesContent: [], names: [], mappings: '' };
 	let text = '';
+	const digits = base64Codes ??= Uint8Array.from(base64, char => char.charCodeAt(0));
 	const chunks: string[] = [];
 	const buffer = new Uint8Array(chunkSize);
 	let length = 0;
@@ -62,7 +67,7 @@ export function renderWithSourceMap<Source extends RewriteSource>(
 			if (rest) {
 				digit |= 32;
 			}
-			buffer[length++] = base64[digit]!;
+			buffer[length++] = digits[digit]!;
 		}
 		while (rest);
 	};
@@ -226,10 +231,11 @@ export function renderWithSourceMap<Source extends RewriteSource>(
 
 declare const TextDecoder: (new(label: string) => { decode(input: Uint8Array): string }) | undefined;
 
-const decoder = typeof TextDecoder === 'function' ? new TextDecoder('latin1') : undefined;
-
 /** The ASCII text of the first `length` bytes of `bytes`. */
 function decode(bytes: Uint8Array, length: number) {
+	if (decoder === undefined) {
+		decoder = typeof TextDecoder === 'function' ? new TextDecoder('latin1') : false;
+	}
 	if (decoder) {
 		return decoder.decode(bytes.subarray(0, length));
 	}
