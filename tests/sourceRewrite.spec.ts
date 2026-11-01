@@ -508,43 +508,67 @@ describe('construction errors', () => {
 		expect(() => collect(aCut)).toThrow('The cut 0..3 is placed inside itself, so it never renders.');
 	});
 
-	test('rendering a cut again is an error that tells how', () => {
+	test('a slice and a view render as often as they are rendered or placed', () => {
 		const rewrite = createRewrite(s, 'abc');
 		const body = rewrite.cut(0, 3, { data: 'body' });
-		collect(body);
-		expect(() => collect(body)).toThrow('The cut 0..3 is already rendered; a slice renders once.');
+		expect([render(body), render(body)]).toEqual(['abc', 'abc']);
 
 		const twice = createRewrite(s, 'abc');
-		const whole = view(twice);
 		const moved = twice.cut(1, 2, { data: 'moved' });
 		twice.insertBefore(0, moved);
 		twice.insertBefore(3, moved);
-		expect(() => collect(whole)).toThrow('The cut 1..2 is placed twice.');
-
-		const placedAfter = createRewrite(s, 'abc');
-		const after = view(placedAfter);
-		const early = placedAfter.cut(1, 2, { data: 'early' });
-		placedAfter.insertBefore(3, early);
-		collect(early);
-		expect(() => collect(after)).toThrow('The cut 1..2 is already rendered; a slice renders once.');
+		expect([render(view(twice)), render(view(twice))]).toEqual(['bacb', 'bacb']);
+		expect(twice.unrendered()).toEqual([]);
 	});
 
-	test('a view renders again, and a slice placed in it is then placed twice', () => {
+	test('an edit after a render renders in the next render', () => {
 		const rewrite = createRewrite(s, 'abc');
-		rewrite.insertBefore(1, 'x');
-		expect([render(view(rewrite)), render(view(rewrite))]).toEqual(['axbc', 'axbc']);
-		const placing = createRewrite(s, 'abc');
-		placing.insertBefore(0, placing.cut(1, 2, { data: 'moved' }));
-		expect(render(view(placing))).toBe('bac');
-		expect(() => render(view(placing))).toThrow('The cut 1..2 is placed twice.');
+		const slice = rewrite.cut(1, 2, { data: 'moved' });
+		rewrite.insertBefore(0, slice);
+		expect(render(view(rewrite))).toBe('bac');
+		rewrite.insertBefore(1, '(');
+		rewrite.insertAfter(2, ')');
+		rewrite.replace(2, 3, 'C');
+		expect(render(view(rewrite))).toBe('(b)aC');
+		expect(render(slice)).toBe('(b)');
+		const inner = rewrite.cut(0, 1, { data: 'inner' });
+		rewrite.insertBefore(3, inner);
+		expect(render(view(rewrite))).toBe('C(b)a');
 	});
 
-	test('an edit after the first render is an error', () => {
+	test('an edit while the rewrite renders is an error', () => {
 		const rewrite = createRewrite(s, 'abc');
-		const body = view(rewrite);
-		collect(body);
-		expect(() => rewrite.writer(0).insertBefore(1, 'x')).toThrow('The rewrite is already rendered.');
-		expect(() => rewrite.cut(1, 2, { data: 'late' })).toThrow('The rewrite is already rendered.');
+		const slice = rewrite.cut(1, 2, { data: 'moved' });
+		const message = 'The rewrite is rendering.';
+		expect(() => rewrite.render(0, 3, () => rewrite.insertBefore(0, 'x'), { data: 'v' })).toThrow(message);
+		expect(() => slice.render(() => rewrite.writer(0).replace(0, 1, 'x'))).toThrow(message);
+		expect(() => rewrite.render(0, 3, () => rewrite.cut(0, 1, { data: 'late' }), { data: 'v' })).toThrow(message);
+		expect(render(view(rewrite))).toBe('ac');
+	});
+
+	test('a render after the content of the source changed is an error', () => {
+		const source = { name: s, content: 'abc' };
+		const rewrite = createSourceRewrite<TestSource, TestData>(source);
+		const slice = rewrite.cut(0, 1, { data: 'cut' });
+		source.content = 'abd';
+		const message = 'The content of the source changed after the rewrite was made.';
+		expect(() => render(view(rewrite))).toThrow(message);
+		expect(() => render(slice)).toThrow(message);
+		source.content = 'abc';
+		expect(render(view(rewrite))).toBe('bc');
+	});
+
+	test('a replace of an empty range removes nothing and puts its code at the char, inside the inserts there', () => {
+		const rewrite = createRewrite(s, 'ab');
+		rewrite.replace(1, 1, 'R');
+		rewrite.insertBefore(1, 'B');
+		rewrite.writer(0).insertBefore(1, 'b');
+		rewrite.insertAfter(1, 'A');
+		rewrite.replace(2, 2, 'E');
+		rewrite.insertBefore(2, 'T');
+		rewrite.replace(0, 0, '');
+		expect(render(view(rewrite))).toBe('aABbRbET');
+		expect(render(view(rewrite, 'v', 1, 2))).toBe('BbRbET');
 	});
 
 	test('the text of a kept range that is not an integer range of the content of its source, or has no source, is an error', () => {
@@ -564,11 +588,10 @@ describe('construction errors', () => {
 		expect(rewritePieceText({ source, start: 3, end: 3 })).toBe('');
 	});
 
-	test('offsets out of the text, an empty replace and an invalid rank are errors', () => {
+	test('offsets out of the text and an invalid rank are errors', () => {
 		const rewrite = createRewrite(s, 'abc');
 		expect(() => rewrite.insertBefore(4, 'x')).toThrow('The offset 4 is out of 0..3.');
 		expect(() => rewrite.writer(0).replace(2, 1, 'x')).toThrow('The range 2..1 is out of 0..3.');
-		expect(() => rewrite.writer(0).replace(1, 1, 'x')).toThrow('The replace at 1 removes no char.');
 		expect(() => rewrite.writer(-1)).toThrow('is not a non-negative integer');
 		expect(() => rewrite.render(2, 4, () => {}, { data: 'v' })).toThrow('The range 2..4 is out of 0..3.');
 	});

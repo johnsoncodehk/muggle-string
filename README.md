@@ -10,7 +10,7 @@ In vuejs/language-tools, plugins for props, emits, models, slots and refs all ed
 
 - **Edits stay correct.** The plugins do not know about each other. Removals add up, so no edit undoes another. Code at one position is ordered by the rank of its writer, so the order of the plugins decides it, not the order of the calls. The tests in `tests/` check both with random edits.
 - **Maps are exact where tools read them.** The same pieces give the spans of a language server and a v3 source map for debuggers. In the source map, generated code maps to nothing, so a debugger never shows it as your code, even when it looks back across lines as V8 does. Kept code maps exactly at token starts in JavaScript, TypeScript, HTML and CSS, which is where breakpoints, stack traces and coverage read. The tests check every generated char of the map.
-- **Performance first.** A language server generates the code again after each change to a file, so the model skips work it does not need. An insert or a replace is only appended to the list of its writer. No text is searched, split or copied when you edit. The first render sorts the edits once, or not at all when they arrived in order, and then freezes the rewrite, so later edits throw. A render passes kept text as ranges of the source and never copies it. Whether to build a string from the pieces is up to you. With Node 24 on an Apple M2, for a 1 MB text with 100,000 inserts and replaces at random offsets from 4 writers, each edit costs about 115 ns in a fresh process and about 37 ns once warm, however many came before, and rendering the text to a string takes about 40 ms cold and 29 ms warm.
+- **Performance first.** A language server generates the code again after each change to a file, so the model skips work it does not need. An insert or a replace is only appended to the list of its writer. No text is searched, split or copied when you edit. A render sorts the edits once, or not at all when they arrived in order, and the renders after it reuse that until the next edit. A render passes kept text as ranges of the source and never copies it. Whether to build a string from the pieces is up to you. With Node 24 on an Apple M2, for a 1 MB text with 100,000 inserts and replaces at random offsets from 4 writers, each edit costs about 115 ns in a fresh process and about 37 ns once warm, however many came before, and rendering the text to a string takes about 40 ms cold and 29 ms warm.
 
 ## Adoption
 
@@ -43,7 +43,7 @@ console.log(text);
 // log(user);
 ```
 
-A source is any object with `content`. Do not change the content until the rewrite is rendered.
+A source is any object with `content`. A render after the content changed throws.
 
 #### Writers and ranks
 
@@ -253,7 +253,7 @@ rewrite.render(0, at, piece => {
 // 3 3 " missing"
 ```
 
-To map code to a position rather than a range, such as a parse error, insert a range without width: `insertBefore(at, { source, start: at, end: at, text })`. A `replace` of an empty range throws, as it has no side, and so does an offset out of the content (see Errors).
+To map code to a position rather than a range, such as a parse error, insert a range without width: `insertBefore(at, { source, start: at, end: at, text })`. A `replace` of an empty range, such as of a reference of no char, removes nothing and puts its code in the place of the char at `at`, inside the inserts there, so code that replaces a range needs no check for an empty one.
 
 #### Code that differs from the source
 
@@ -306,7 +306,7 @@ console.log(ranges.join(' '));
 // 3..5 5..15 15..16 16..17
 ```
 
-Where the code is the text of the block, rewrite the block and render the range of the code as a view. Where it differs, such as after decoding entities, rewrite the code as its own source, and let the layer that makes the code give it as pieces in block offsets, through which kept ranges map back. The first render freezes a rewrite, so code made and rendered unit by unit needs a rewrite per unit.
+Where the code is the text of the block, rewrite the block and render the range of the code as a view. Where it differs, such as after decoding entities, rewrite the code as its own source, and let the layer that makes the code give it as pieces in block offsets, through which kept ranges map back.
 
 #### Several sources
 
@@ -347,8 +347,6 @@ function attempt(edit: () => void) {
 const source = { content: 'a = 1;\nb = 2;\n' };
 const rewrite = createSourceRewrite(source);
 
-attempt(() => rewrite.replace(2, 2, 'x'));
-// The replace at 2 removes no char.
 attempt(() => rewrite.insertBefore(20, 'x'));
 // The offset 20 is out of 0..14.
 attempt(() => rewrite.writer(-1));
@@ -357,12 +355,11 @@ attempt(() => rewrite.writer(-1));
 const first = rewrite.cut(0, 6);
 attempt(() => rewrite.cut(4, 9));
 // The cut 4..9 crosses the cut 0..6.
-rewrite.insertBefore(14, first);
-rewrite.render(0, 14, () => {});
-attempt(() => rewrite.insertBefore(0, 'x'));
-// The rewrite is already rendered.
-attempt(() => first.render(() => {}));
-// The cut 0..6 is already rendered; a slice renders once.
+attempt(() => rewrite.render(0, 14, () => rewrite.insertBefore(0, 'x')));
+// The rewrite is rendering.
+source.content = 'a = 2;\nb = 2;\n';
+attempt(() => rewrite.render(0, 14, () => {}));
+// The content of the source changed after the rewrite was made.
 ```
 
 ```ts
@@ -383,7 +380,7 @@ catch (error) {
 
 `insertBefore(2, …)` attaches to the first char of the cut, so a slice placed at its own start is inside itself.
 
-An edit that throws changes nothing, but the edits before it stay, so discard the rewrite after a throw. What the first render throws, every later render throws again.
+An edit that throws changes nothing. An error that a render throws comes from edits that stay, so every later render throws it too.
 
 #### Source maps
 
@@ -473,14 +470,14 @@ The baselines are the 0.4 segment array, whose every edit scans and splits the s
 <summary>Editing</summary>
 
 - `insertBefore(offset, code)` attaches code to the char at `offset`, and `insertAfter(offset, code)` to the char before it. The code moves with that char.
-- `replace(start, end, code)` removes `start`..`end` and puts `code` in its place. An empty range throws; to map code to a position, insert `{ source, start: at, end: at, text }`.
+- `replace(start, end, code)` removes `start`..`end` and puts `code` in its place. An empty range removes nothing and puts `code` in the place of the char at `start`, inside the inserts there, or at the end of the text; to map code to a position, write `{ source, start: at, end: at, text }`.
 - Offsets of edits, cuts and views that are not integers in 0..the length of the content throw.
 - `rewrite.writer(rank)` gives a writer with its own rank. At one position, code of a higher rank goes outside code of a lower rank. The rewrite itself is the outermost writer. Code of one writer at one position keeps call order.
 - `rewrite.cut(start, end, options)` takes a range out and returns a slice. The slice renders the range, with every edit inside it, where you place it. `options.placeholder` renders where the range was.
 - Cuts can be made in any order. A cut inside another moves with it. A cut that crosses another throws, naming both ranges.
 - Kept text of a slice carries the data of its cut, wherever the slice renders.
-- A slice renders exactly once. Rendering it again throws. A slice placed inside its own range, also by `insertBefore` at its start, throws at the first render. `rewrite.unrendered()` lists the slices that have not rendered yet.
-- The first render freezes the rewrite, so later edits throw.
+- A slice renders wherever and as often as it is placed and rendered, as a view does. A slice placed inside its own range, also by `insertBefore` at its start, throws when it renders. `rewrite.unrendered()` lists the slices that have not rendered yet.
+- A render renders the edits made before it, so an edit after a render shows in the next one. An edit while a render runs, such as from its sink, throws. A render after the content of the source changed throws.
 
 </details>
 
