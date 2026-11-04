@@ -19,7 +19,7 @@ In vuejs/language-tools, plugins for props, emits, models, slots and refs all ed
 
 ## Install
 
-`npm install muggle-string`. It ships as ES modules only. CommonJS code can `require` it on Node 20.19 and later, or 22.12 and later. `renderWithSourceMap` also needs the global `TextDecoder` of the WHATWG Encoding Standard, as Node and Bun define it.
+`npm install muggle-string`. It ships as ES modules only. CommonJS code can `require` it on Node 20.19 and later, or 22.12 and later. `renderWithSourceMap` also needs the global `TextDecoder` of the WHATWG Encoding Standard, as Node and Bun define it; `renderWithDecodedSourceMap` does not.
 
 ## Usage
 
@@ -409,6 +409,23 @@ console.log(JSON.stringify(map));
 
 `renderWithSourceMap(render, sourceName)` passes a sink to `render`, and `sourceName` gives the entry of each source in `sources`. Where the global `TextDecoder` is not defined, the first call throws before it renders.
 
+`renderWithDecodedSourceMap(render, sourceName)` gives the same text and map with `mappings` decoded, for code that works on the segments instead of writing out the map. Each line of the generated text has an array of segments, `[column, source, line, column, name]` in zero-based numbers, without the source fields where the segment has no source and without `name` where it has none. It needs no `TextDecoder`.
+
+```ts
+import { createSourceRewrite, renderWithDecodedSourceMap } from 'muggle-string';
+
+const source = { name: 'main.js', content: 'let a = 1;\n' };
+const rewrite = createSourceRewrite<typeof source, { name?: string }>(source);
+rewrite.replace(4, 5, { source, start: 4, end: 5, text: 'b', name: 'a' });
+
+const { map } = renderWithDecodedSourceMap(
+	sink => rewrite.render(0, source.content.length, sink),
+	(from: typeof source) => from.name,
+);
+console.log(JSON.stringify(map.mappings));
+// [[[0,0,0,0],[3,0,0,3],[4,0,0,4,0],[5,0,0,5],[6,0,0,6],[7,0,0,7],[8,0,0,8],[9,0,0,9]],[]]
+```
+
 A range that has no source, or whose offsets are not integers within the content of its source, throws when it reaches the sink:
 
 ```ts
@@ -437,6 +454,7 @@ Offsets always point into the original text, also after other edits.
 | move a range | `insertBefore(to, rewrite.cut(start, end))` |
 | read the result | `rewrite.render(0, source.content.length, piece => text += rewritePieceText(piece))` |
 | get a source map | `renderWithSourceMap`, above |
+| get the segments of a source map | `renderWithDecodedSourceMap`, above |
 
 ## What the techniques save
 
@@ -498,7 +516,7 @@ type Piece<Origin = unknown> = string | (Origin & { start: number; end: number; 
 - A string is new text.
 - A range without `text` keeps the source text at `start`..`end`.
 - A range with `text` is generated text that stands for `start`..`end`.
-- `start` and `end` are integers, with 0 ≤ `start` ≤ `end` ≤ the length of the `content` of the source. `renderWithSourceMap` throws on a range that breaks this or has no source, when the range reaches its sink. `rewritePieceText` throws on such a range without `text`, as it reads the source only for kept text. A rewrite checks the offsets of its own edits, cuts and views when you call them, and passes the ranges you write as code on as they are.
+- `start` and `end` are integers, with 0 ≤ `start` ≤ `end` ≤ the length of the `content` of the source. `renderWithSourceMap` and `renderWithDecodedSourceMap` throw on a range that breaks this or has no source, when the range reaches their sink. `rewritePieceText` throws on such a range without `text`, as it reads the source only for kept text. A rewrite checks the offsets of its own edits, cuts and views when you call them, and passes the ranges you write as code on as they are.
 
 The ranges of a rewrite also carry their `source` and the fields of `Data`. Kept text gets the `data` passed to `render` or `cut`. The ranges you write carry what you put on them, like `name` in the source map example. `rewritePieceText(piece)` gives the text of any piece. A producer of one source, such as [muggle-pug](https://github.com/johnsoncodehk/muggle-pug), can emit plain `Piece` ranges without a `source`.
 
@@ -530,6 +548,7 @@ for (const piece of pieces) {
 - The `text` of a range maps to the start of the range.
 - New text maps to nothing.
 - `renderWithSourceMap` needs the global `TextDecoder` of the WHATWG Encoding Standard, as Node and Bun define it. Where it is not defined, the first call throws before it renders.
+- `renderWithDecodedSourceMap` gives the same map with its `mappings` decoded: encoded line by line as v3 mappings, they are the `mappings` of `renderWithSourceMap`, its empty last line included. It needs no `TextDecoder`.
 - The `name` of a range with `text` goes into `names`. Set it only when `text` renames the identifier at the range. Kept text maps to itself, so the `name` of a range without `text`, such as a `name` field of the `data` of a view, goes nowhere. A name on text that starts with another identifier, such as `__props.x` for `x`, makes a debugger show `__props` as `x`. muggle-string adds no names itself.
 
 </details>

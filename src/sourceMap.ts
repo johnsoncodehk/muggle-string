@@ -9,6 +9,25 @@ export interface SourceMap {
 	mappings: string;
 }
 
+/**
+ * A segment of the `mappings` of a decoded source map, in zero-based numbers: the column in the generated line; for
+ * a segment with a source, the index of its source in `sources`, then its line and column there; for a named one,
+ * the index of its name in `names`.
+ */
+export type SourceMapSegment =
+	| [column: number]
+	| [column: number, source: number, sourceLine: number, sourceColumn: number]
+	| [column: number, source: number, sourceLine: number, sourceColumn: number, name: number];
+
+/** A source map whose `mappings` are the segments of each generated line, in the order of their columns. */
+export interface DecodedSourceMap {
+	version: 3;
+	sources: string[];
+	sourcesContent: string[];
+	names: string[];
+	mappings: SourceMapSegment[][];
+}
+
 /** Where a render puts the segments of its map, by absolute numbers, and what it makes of them at the end. */
 interface SegmentWriter<Mappings> {
 	/** A segment with a source, and a name unless `name` is -1. */
@@ -61,7 +80,19 @@ export function renderWithSourceMap<S extends Source>(
 	return renderWith(render, sourceName, new ByteWriter(latin1));
 }
 
-/** The render of the map, which decides every segment of it and gives each to `writer`. */
+/**
+ * The generated text and source map that `renderWithSourceMap` gives for the same `render` and `sourceName`, with
+ * `mappings` decoded: encoding them line by line as v3 mappings gives the `mappings` of `renderWithSourceMap`, its
+ * empty last line included. The segments follow its rules, and it throws where it throws. It needs no `TextDecoder`.
+ */
+export function renderWithDecodedSourceMap<S extends Source>(
+	render: (sink: (piece: Piece<{ source: S; name?: string }>) => void) => void,
+	sourceName: (source: S) => string,
+): { text: string; map: DecodedSourceMap } {
+	return renderWith(render, sourceName, new ArrayWriter());
+}
+
+/** The render of both maps, which decides every segment of them and gives each to `writer`. */
 function renderWith<S extends Source, Mappings>(
 	render: (sink: (piece: Piece<{ source: S; name?: string }>) => void) => void,
 	sourceName: (source: S) => string,
@@ -301,6 +332,30 @@ class ByteWriter implements SegmentWriter<string> {
 	end() {
 		this.chunks.push(this.latin1.decode(this.buffer.subarray(0, this.length)));
 		return this.chunks.join('');
+	}
+}
+
+/** The writer of decoded mappings, as an array of the segments of each line. */
+class ArrayWriter implements SegmentWriter<SourceMapSegment[][]> {
+	line: SourceMapSegment[] = [];
+	lines = [this.line];
+
+	mapped(column: number, source: number, sourceLine: number, sourceColumn: number, name: number) {
+		this.line.push(
+			name === -1 ? [column, source, sourceLine, sourceColumn] : [column, source, sourceLine, sourceColumn, name],
+		);
+	}
+
+	unmapped(column: number) {
+		this.line.push([column]);
+	}
+
+	newLine() {
+		this.lines.push(this.line = []);
+	}
+
+	end() {
+		return this.lines;
 	}
 }
 
