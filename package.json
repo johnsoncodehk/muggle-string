@@ -1,30 +1,39 @@
 {
 	"name": "muggle-string",
-	"version": "1.0.1",
+	"version": "1.0.2-alpha.0",
 	"description": "Ranked, conflict-free rewrites of a source text, rendered as format-neutral pieces",
 	"type": "module",
+	"main": "./out/cjs/index.js",
+	"types": "./out/cjs/index.d.ts",
 	"exports": {
 		".": {
-			"types": "./out/index.d.ts",
-			"default": "./out/index.js"
+			"import": {
+				"types": "./out/index.d.ts",
+				"default": "./out/index.js"
+			},
+			"require": {
+				"types": "./out/cjs/index.d.ts",
+				"default": "./out/cjs/index.js"
+			}
 		}
 	},
 	"sideEffects": false,
 	"engines": {
-		"node": "^20.19.0 || >=22.12.0"
+		"node": ">=12"
 	},
 	"license": "MIT",
 	"files": [
 		"out/**/*.js",
-		"out/**/*.d.ts"
+		"out/**/*.d.ts",
+		"out/cjs/package.json"
 	],
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/johnsoncodehk/muggle-string.git"
 	},
 	"scripts": {
-		"build": "tsc",
-		"prepare": "tsc",
+		"build": "tsc && tsc -p tsconfig.cjs.json && node -e \"require('fs').writeFileSync('out/cjs/package.json', '{\\\"type\\\":\\\"commonjs\\\"}\\\\n')\"",
+		"prepare": "tsc && tsc -p tsconfig.cjs.json && node -e \"require('fs').writeFileSync('out/cjs/package.json', '{\\\"type\\\":\\\"commonjs\\\"}\\\\n')\"",
 		"test": "vitest run",
 		"bench": "node bench/run.mjs"
 	},
