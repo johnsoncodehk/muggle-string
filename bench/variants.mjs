@@ -315,44 +315,64 @@ export const variants = [
 		replacements: [
 			{
 				file: 'sourceMap.ts',
-				find: `	const latin1 = decoder ??= createDecoder();`,
-				replace: `	decoder ??= createDecoder();`,
+				find: `	const latin1 = decoder ??= createDecoder();
+	return renderWith(render, sourceName, new ByteWriter(latin1));`,
+				replace: `	decoder ??= createDecoder();
+	return renderWith(render, sourceName, new ByteWriter());`,
 			},
 			{
 				file: 'sourceMap.ts',
-				find: `	const digits = base64Codes ??= Uint8Array.from(base64, char => char.charCodeAt(0));
-	const chunks: string[] = [];
-	const buffer = new Uint8Array(chunkSize);
-	let length = 0;`,
-				replace: `	let mappings = '';`,
+				find: `	digits = base64Codes ??= Uint8Array.from(base64, char => char.charCodeAt(0));
+	chunks: string[] = [];
+	buffer = new Uint8Array(chunkSize);
+	length = 0;`,
+				replace: `	mappings = '';`,
+			},
+			{
+				file: 'sourceMap.ts',
+				find: `	constructor(readonly latin1: { decode(input: Uint8Array): string }) {}
+`,
+				replace: '',
+			},
+			{
+				file: 'sourceMap.ts',
+				find: `		const { buffer, digits } = this;
+		let length = this.length;
+`,
+				replace: '',
 			},
 			{
 				file: 'sourceMap.ts',
 				find: `			buffer[length++] = digits[digit]!;`,
-				replace: `			mappings += base64[digit]!;`,
+				replace: `			this.mappings += base64[digit]!;`,
 			},
 			{
 				file: 'sourceMap.ts',
-				find: /^\tconst reserve = \(\) => \{[\s\S]*?^\t\};\n/m,
-				replace: `	const reserve = () => {};
-`,
-			},
-			{
-				file: 'sourceMap.ts',
-				find: `			buffer[length++] = comma;`,
-				replace: `			mappings += ',';`,
-			},
-			{
-				file: 'sourceMap.ts',
-				find: `		buffer[length++] = semicolon;`,
-				replace: `		mappings += ';';`,
-			},
-			{
-				file: 'sourceMap.ts',
-				find: `	chunks.push(latin1.decode(buffer.subarray(0, length)));
-	const mappings = chunks.join('');
+				find: `		this.length = length;
 `,
 				replace: '',
+			},
+			{
+				file: 'sourceMap.ts',
+				find: /^\treserve\(\) \{[\s\S]*?^\t\}\n/m,
+				replace: `	reserve() {}
+`,
+			},
+			{
+				file: 'sourceMap.ts',
+				find: `			this.buffer[this.length++] = comma;`,
+				replace: `			this.mappings += ',';`,
+			},
+			{
+				file: 'sourceMap.ts',
+				find: `		this.buffer[this.length++] = semicolon;`,
+				replace: `		this.mappings += ';';`,
+			},
+			{
+				file: 'sourceMap.ts',
+				find: `		this.chunks.push(this.latin1.decode(this.buffer.subarray(0, this.length)));
+		return this.chunks.join('');`,
+				replace: `		return this.mappings;`,
 			},
 		],
 	},

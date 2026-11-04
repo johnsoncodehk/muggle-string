@@ -9,6 +9,16 @@ export interface SourceMap {
 	mappings: string;
 }
 
+/** Where a render puts the segments of its map, by absolute numbers, and what it makes of them at the end. */
+interface SegmentWriter<Mappings> {
+	/** A segment with a source, and a name unless `name` is -1. */
+	mapped(column: number, source: number, line: number, sourceColumn: number, name: number): void;
+	/** A segment without a source. */
+	unmapped(column: number): void;
+	newLine(): void;
+	end(): Mappings;
+}
+
 const base64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 
 // Made at the first call that needs them, so that importing the module only defines its functions and constants.
@@ -48,80 +58,51 @@ export function renderWithSourceMap<S extends Source>(
 ): { text: string; map: SourceMap } {
 	// before the render, which may render slices that render only once
 	const latin1 = decoder ??= createDecoder();
+	return renderWith(render, sourceName, new ByteWriter(latin1));
+}
+
+/** The render of the map, which decides every segment of it and gives each to `writer`. */
+function renderWith<S extends Source, Mappings>(
+	render: (sink: (piece: Piece<{ source: S; name?: string }>) => void) => void,
+	sourceName: (source: S) => string,
+	writer: SegmentWriter<Mappings>,
+) {
 	const sources = new Map<S, { index: number; lineStarts: number[]; length: number }>();
-	const map: SourceMap = { version: 3, sources: [], sourcesContent: [], names: [], mappings: '' };
+	const sourceNames: string[] = [];
+	const sourcesContent: string[] = [];
+	const names: string[] = [];
 	let text = '';
-	const digits = base64Codes ??= Uint8Array.from(base64, char => char.charCodeAt(0));
-	const chunks: string[] = [];
-	const buffer = new Uint8Array(chunkSize);
-	let length = 0;
 	let column = 0;
 	let lineHasSegment = false;
 	let lineEndsMapped = false;
 	let endsWithoutSource = false;
-	let lastColumn = 0;
-	let lastSource = 0;
-	let lastLine = 0;
-	let lastSourceColumn = 0;
-	let lastName = 0;
 	let pieceName: string | undefined;
-	const names = new Map<string, number>();
+	const nameIndexes = new Map<string, number>();
 
-	const encode = (value: number) => {
-		let rest = value < 0 ? (-value << 1) | 1 : value << 1;
-		do {
-			let digit = rest & 31;
-			rest >>>= 5;
-			if (rest) {
-				digit |= 32;
-			}
-			buffer[length++] = digits[digit]!;
-		}
-		while (rest);
-	};
-	// A segment takes at most a comma and five fields of 7 digits.
-	const reserve = () => {
-		if (length > chunkSize - 36) {
-			chunks.push(latin1.decode(buffer.subarray(0, length)));
-			length = 0;
-		}
-	};
 	const segment = () => {
-		reserve();
-		if (lineHasSegment) {
-			buffer[length++] = comma;
-		}
-		encode(column - lastColumn);
-		lastColumn = column;
+		writer.unmapped(column);
 		lineHasSegment = true;
 	};
 	const mapTo = (source: number, line: number, sourceColumn: number, named = true) => {
-		segment();
-		encode(source - lastSource);
-		encode(line - lastLine);
-		encode(sourceColumn - lastSourceColumn);
+		let name = -1;
 		if (named && pieceName !== undefined) {
-			let known = names.get(pieceName);
+			let known = nameIndexes.get(pieceName);
 			if (known === undefined) {
-				known = names.size;
-				names.set(pieceName, known);
-				map.names.push(pieceName);
+				known = nameIndexes.size;
+				nameIndexes.set(pieceName, known);
+				names.push(pieceName);
 			}
-			encode(known - lastName);
-			lastName = known;
+			name = known;
 			pieceName = undefined;
 		}
-		lastSource = source;
-		lastLine = line;
-		lastSourceColumn = sourceColumn;
+		writer.mapped(column, source, line, sourceColumn, name);
+		lineHasSegment = true;
 		lineEndsMapped = true;
 		endsWithoutSource = false;
 	};
 	const newLine = () => {
-		reserve();
-		buffer[length++] = semicolon;
+		writer.newLine();
 		column = 0;
-		lastColumn = 0;
 		lineHasSegment = false;
 		lineEndsMapped = false;
 		endsWithoutSource = false;
@@ -148,8 +129,8 @@ export function renderWithSourceMap<S extends Source>(
 			}
 			known = { index: sources.size, lineStarts, length: content.length };
 			sources.set(source, known);
-			map.sources.push(sourceName(source));
-			map.sourcesContent.push(content);
+			sourceNames.push(sourceName(source));
+			sourcesContent.push(content);
 		}
 		return known;
 	};
@@ -179,7 +160,7 @@ export function renderWithSourceMap<S extends Source>(
 		const { start, end } = piece;
 		// `>>> 0` keeps only integers from 0 to 2 ** 32 - 1, beyond any string length
 		if (start >>> 0 !== start || end >>> 0 !== end || start > end || end > sourceLength) {
-			throw new RangeError(`The range ${start}..${end} of ${map.sources[index]} is out of 0..${sourceLength}.`);
+			throw new RangeError(`The range ${start}..${end} of ${sourceNames[index]} is out of 0..${sourceLength}.`);
 		}
 		pieceName = piece.text === undefined ? undefined : piece.name;
 		let line = 0;
@@ -239,11 +220,88 @@ export function renderWithSourceMap<S extends Source>(
 		pieceName = undefined;
 	});
 
-	chunks.push(latin1.decode(buffer.subarray(0, length)));
-	const mappings = chunks.join('');
 	// Node reads a segment without a source that ends the mappings as one that keeps the source position before it
-	map.mappings = endsWithoutSource ? mappings + ';' : mappings;
+	if (endsWithoutSource) {
+		newLine();
+	}
+	const map = { version: 3 as const, sources: sourceNames, sourcesContent, names, mappings: writer.end() };
 	return { text, map };
+}
+
+/** The writer of v3 mappings, as the bytes of their digits in a reused buffer, decoded by chunk. */
+class ByteWriter implements SegmentWriter<string> {
+	digits = base64Codes ??= Uint8Array.from(base64, char => char.charCodeAt(0));
+	chunks: string[] = [];
+	buffer = new Uint8Array(chunkSize);
+	length = 0;
+	lineHasSegment = false;
+	lastColumn = 0;
+	lastSource = 0;
+	lastLine = 0;
+	lastSourceColumn = 0;
+	lastName = 0;
+
+	constructor(readonly latin1: { decode(input: Uint8Array): string }) {}
+
+	encode(value: number) {
+		let rest = value < 0 ? (-value << 1) | 1 : value << 1;
+		const { buffer, digits } = this;
+		let length = this.length;
+		do {
+			let digit = rest & 31;
+			rest >>>= 5;
+			if (rest) {
+				digit |= 32;
+			}
+			buffer[length++] = digits[digit]!;
+		}
+		while (rest);
+		this.length = length;
+	}
+
+	// A segment takes at most a comma and five fields of 7 digits.
+	reserve() {
+		if (this.length > chunkSize - 36) {
+			this.chunks.push(this.latin1.decode(this.buffer.subarray(0, this.length)));
+			this.length = 0;
+		}
+	}
+
+	unmapped(column: number) {
+		this.reserve();
+		if (this.lineHasSegment) {
+			this.buffer[this.length++] = comma;
+		}
+		this.encode(column - this.lastColumn);
+		this.lastColumn = column;
+		this.lineHasSegment = true;
+	}
+
+	mapped(column: number, source: number, line: number, sourceColumn: number, name: number) {
+		this.unmapped(column);
+		this.encode(source - this.lastSource);
+		this.encode(line - this.lastLine);
+		this.encode(sourceColumn - this.lastSourceColumn);
+		if (name !== -1) {
+			this.encode(name - this.lastName);
+			this.lastName = name;
+		}
+		this.lastSource = source;
+		this.lastLine = line;
+		this.lastSourceColumn = sourceColumn;
+	}
+
+	newLine() {
+		this.reserve();
+		this.buffer[this.length++] = semicolon;
+		this.lastColumn = 0;
+		this.lineHasSegment = false;
+	}
+
+	end() {
+		this.chunks.push(this.latin1.decode(this.buffer.subarray(0, this.length)));
+		return this.chunks.join('');
+	}
 }
 
 declare const TextDecoder: (new(label: string) => { decode(input: Uint8Array): string }) | undefined;
