@@ -426,6 +426,15 @@ console.log(JSON.stringify(map.mappings));
 // [[[0,0,0,0],[3,0,0,3],[4,0,0,4,0],[5,0,0,5],[6,0,0,6],[7,0,0,7],[8,0,0,8],[9,0,0,9]],[]]
 ```
 
+`encodeMappings(mappings)` writes decoded mappings back as the v3 `mappings` string, as `renderWithSourceMap` writes them, for code that changes the segments before it writes out the map. A field that is not an integer from 0 to 2 ** 30 - 1 throws, and so does a call where the global `TextDecoder` is not defined.
+
+```ts
+import { encodeMappings } from 'muggle-string';
+
+console.log(encodeMappings([[[0, 0, 0, 0], [4]], [], [[2, 0, 1, 3, 0]]]));
+// AAAA,I;;EACGA
+```
+
 A range that has no source, or whose offsets are not integers within the content of its source, throws when it reaches the sink:
 
 ```ts

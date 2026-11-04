@@ -76,8 +76,37 @@ export function renderWithSourceMap<S extends Source>(
 	sourceName: (source: S) => string,
 ): { text: string; map: SourceMap } {
 	// before the render, which may render slices that render only once
-	const latin1 = decoder ??= createDecoder();
+	const latin1 = decoder ??= createDecoder('renderWithSourceMap');
 	return renderWith(render, sourceName, new ByteWriter(latin1));
+}
+
+/**
+ * The v3 `mappings` of decoded `mappings`, the segments of each line, as `renderWithSourceMap` writes them, so that it
+ * gives the `mappings` of `renderWithSourceMap` for the `mappings` of `renderWithDecodedSourceMap`. A field that is not
+ * an integer from 0 to 2 ** 30 - 1, beyond any string length, throws. Where no `TextDecoder` is defined, it throws.
+ */
+export function encodeMappings(mappings: readonly (readonly SourceMapSegment[])[]): string {
+	const writer = new ByteWriter(decoder ??= createDecoder('encodeMappings'));
+	for (let line = 0; line < mappings.length; line++) {
+		if (line) {
+			writer.newLine();
+		}
+		for (const segment of mappings[line]!) {
+			for (let field = 0; field < segment.length; field++) {
+				const value = segment[field]!;
+				if (value >>> 0 !== value || value >= 2 ** 30) {
+					throw new RangeError(`The segment [${segment}] of line ${line} has a field out of 0..2 ** 30 - 1.`);
+				}
+			}
+			if (segment.length === 1) {
+				writer.unmapped(segment[0]);
+			}
+			else {
+				writer.mapped(segment[0], segment[1], segment[2], segment[3], segment.length === 5 ? segment[4] : -1);
+			}
+		}
+	}
+	return writer.end();
 }
 
 /**
@@ -362,10 +391,10 @@ class ArrayWriter implements SegmentWriter<SourceMapSegment[][]> {
 declare const TextDecoder: (new(label: string) => { decode(input: Uint8Array): string }) | undefined;
 
 /** The decoder of the ASCII digits of the mappings, from the `TextDecoder` of the WHATWG Encoding Standard. */
-function createDecoder() {
+function createDecoder(caller: string) {
 	if (typeof TextDecoder !== 'function') {
 		throw new Error(
-			'renderWithSourceMap needs the global TextDecoder of the WHATWG Encoding Standard, which is not defined here.',
+			`${caller} needs the global TextDecoder of the WHATWG Encoding Standard, which is not defined here.`,
 		);
 	}
 	return new TextDecoder('latin1');

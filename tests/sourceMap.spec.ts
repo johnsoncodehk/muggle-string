@@ -4,6 +4,7 @@ import { describe, expect, test, vi } from 'vitest';
 import {
 	createSourceRewrite,
 	type DecodedSourceMap,
+	encodeMappings,
 	type Piece,
 	renderWithDecodedSourceMap,
 	renderWithSourceMap,
@@ -130,7 +131,9 @@ function offsetOf(map: SourceMap, source: string, line: number, column: number) 
 function check(pieces: TestPiece[]) {
 	const { text, map } = render(pieces);
 	expect(text).toBe(pieces.map(rewritePieceText).join(''));
-	expect(renderDecoded(pieces)).toEqual(decodedOf({ text, map }));
+	const decoded = renderDecoded(pieces);
+	expect(decoded).toEqual(decodedOf({ text, map }));
+	expect(encodeMappings(decoded.map.mappings)).toBe(map.mappings);
 	const trace = new TraceMap(map as never);
 	const node = new NodeSourceMap(map);
 	expected(pieces).forEach((chars, line) => {
@@ -457,6 +460,40 @@ describe('renderWithDecodedSourceMap', () => {
 			);
 			expect(() => encoded<TestSource>(sink => pieces.forEach(sink), source => source.name)).toThrow(
 				'renderWithSourceMap needs the global TextDecoder of the WHATWG Encoding Standard, which is not defined here.',
+			);
+		}
+		finally {
+			vi.unstubAllGlobals();
+		}
+	});
+});
+
+describe('encodeMappings', () => {
+	test('writes each line of segments as v3 mappings, by fields relative to the segment before', () => {
+		expect(encodeMappings([[[0, 0, 0, 0], [4]], [], [[2, 0, 1, 3, 0], [3, 1, 0, 0, 1]], [[0, 0, 2, 0, 0]]])).toBe(
+			'AAAA,I;;EACGA,CCDHC;ADEAD',
+		);
+		expect(encodeMappings([[[16, 0, 0, 0]]])).toBe('gBAAA');
+		expect(encodeMappings([[[2 ** 30 - 1]]])).toBe('+/////B');
+		expect(encodeMappings([[]])).toBe('');
+		expect(encodeMappings([])).toBe('');
+	});
+
+	test('throws on a field that is not an integer from 0 to 2 ** 30 - 1', () => {
+		for (const value of [-1, 1.5, 2 ** 30, Number.NaN, Infinity]) {
+			expect(() => encodeMappings([[[0]], [[1, 0, value, 0]]])).toThrow(
+				`The segment [1,0,${value},0] of line 1 has a field out of 0..2 ** 30 - 1.`,
+			);
+		}
+	});
+
+	test('where no TextDecoder is defined, it throws', async () => {
+		vi.stubGlobal('TextDecoder', undefined);
+		vi.resetModules();
+		try {
+			const { encodeMappings: withoutDecoder } = await import('../src/sourceMap');
+			expect(() => withoutDecoder([[[0]]])).toThrow(
+				'encodeMappings needs the global TextDecoder of the WHATWG Encoding Standard, which is not defined here.',
 			);
 		}
 		finally {

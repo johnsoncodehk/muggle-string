@@ -892,5 +892,5 @@ test('the built package is ES modules that Node imports by the package name, wit
 		{ cwd: path.join(__dirname, '..'), encoding: 'utf8' },
 	);
 	expect(stderr).toBe('');
-	expect(stdout.trim()).toBe('createSourceRewrite,renderWithDecodedSourceMap,renderWithSourceMap,rewritePieceText');
+	expect(stdout.trim()).toBe('createSourceRewrite,encodeMappings,renderWithDecodedSourceMap,renderWithSourceMap,rewritePieceText');
 });
