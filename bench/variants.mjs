@@ -315,10 +315,16 @@ export const variants = [
 		replacements: [
 			{
 				file: 'sourceMap.ts',
-				find: `	const latin1 = decoder ??= createDecoder();
+				find: `	const latin1 = decoder ??= createDecoder('renderWithSourceMap');
 	return renderWith(render, sourceName, new ByteWriter(latin1));`,
-				replace: `	decoder ??= createDecoder();
+				replace: `	decoder ??= createDecoder('renderWithSourceMap');
 	return renderWith(render, sourceName, new ByteWriter());`,
+			},
+			{
+				file: 'sourceMap.ts',
+				find: `	const writer = new ByteWriter(decoder ??= createDecoder('encodeMappings'));`,
+				replace: `	decoder ??= createDecoder('encodeMappings');
+	const writer = new ByteWriter();`,
 			},
 			{
 				file: 'sourceMap.ts',
