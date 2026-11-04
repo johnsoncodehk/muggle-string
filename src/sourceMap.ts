@@ -48,7 +48,8 @@ let word: RegExp | undefined;
 
 const comma = 44;
 const semicolon = 59;
-const chunkSize = 65536;
+// Small, as each call allocates and zero-fills a whole chunk however short its map is.
+const chunkSize = 4096;
 
 const enum CharClass {
 	Space,
@@ -76,8 +77,8 @@ export function renderWithSourceMap<S extends Source>(
 	sourceName: (source: S) => string,
 ): { text: string; map: SourceMap } {
 	// before the render, which may render slices that render only once
-	const latin1 = decoder ??= createDecoder('renderWithSourceMap');
-	return renderWith(render, sourceName, new ByteWriter(latin1));
+	const utf8 = decoder ??= createDecoder('renderWithSourceMap');
+	return renderWith(render, sourceName, new ByteWriter(utf8));
 }
 
 /**
@@ -92,21 +93,31 @@ export function encodeMappings(mappings: readonly (readonly SourceMapSegment[])[
 			writer.newLine();
 		}
 		for (const segment of mappings[line]!) {
-			for (let field = 0; field < segment.length; field++) {
-				const value = segment[field]!;
-				if (value >>> 0 !== value || value >= 2 ** 30) {
-					throw new RangeError(`The segment [${segment}] of line ${line} has a field out of 0..2 ** 30 - 1.`);
-				}
-			}
 			if (segment.length === 1) {
-				writer.unmapped(segment[0]);
+				writer.unmapped(fieldOf(segment, 0, line));
 			}
 			else {
-				writer.mapped(segment[0], segment[1], segment[2], segment[3], segment.length === 5 ? segment[4] : -1);
+				writer.mapped(
+					fieldOf(segment, 0, line),
+					fieldOf(segment, 1, line),
+					fieldOf(segment, 2, line),
+					fieldOf(segment, 3, line),
+					segment.length === 5 ? fieldOf(segment, 4, line) : -1,
+				);
 			}
 		}
 	}
 	return writer.end();
+}
+
+/** The field at `index` of `segment`, on `line`, which throws unless it is an integer from 0 to 2 ** 30 - 1. */
+function fieldOf(segment: readonly number[], index: number, line: number) {
+	const value = segment[index]!;
+	// `& 0x3fffffff` keeps only integers from 0 to 2 ** 30 - 1 as they are, in the small integers of engines
+	if ((value & 0x3fffffff) !== value) {
+		throw new RangeError(`The segment [${segment}] of line ${line} has a field out of 0..2 ** 30 - 1.`);
+	}
+	return value;
 }
 
 /**
@@ -301,7 +312,7 @@ class ByteWriter implements SegmentWriter<string> {
 	lastSourceColumn = 0;
 	lastName = 0;
 
-	constructor(readonly latin1: { decode(input: Uint8Array): string }) {}
+	constructor(readonly utf8: { decode(input: Uint8Array): string }) {}
 
 	encode(value: number) {
 		let rest = value < 0 ? (-value << 1) | 1 : value << 1;
@@ -322,7 +333,7 @@ class ByteWriter implements SegmentWriter<string> {
 	// A segment takes at most a comma and five fields of 7 digits.
 	reserve() {
 		if (this.length > chunkSize - 36) {
-			this.chunks.push(this.latin1.decode(this.buffer.subarray(0, this.length)));
+			this.chunks.push(this.utf8.decode(this.buffer.subarray(0, this.length)));
 			this.length = 0;
 		}
 	}
@@ -359,7 +370,7 @@ class ByteWriter implements SegmentWriter<string> {
 	}
 
 	end() {
-		this.chunks.push(this.latin1.decode(this.buffer.subarray(0, this.length)));
+		this.chunks.push(this.utf8.decode(this.buffer.subarray(0, this.length)));
 		return this.chunks.join('');
 	}
 }
@@ -390,14 +401,17 @@ class ArrayWriter implements SegmentWriter<SourceMapSegment[][]> {
 
 declare const TextDecoder: (new(label: string) => { decode(input: Uint8Array): string }) | undefined;
 
-/** The decoder of the ASCII digits of the mappings, from the `TextDecoder` of the WHATWG Encoding Standard. */
+/**
+ * The decoder of the ASCII digits of the mappings, from the `TextDecoder` of the WHATWG Encoding Standard: UTF-8, which
+ * engines decode fastest for ASCII, where the label `latin1` is windows-1252, which Node decodes by ICU.
+ */
 function createDecoder(caller: string) {
 	if (typeof TextDecoder !== 'function') {
 		throw new Error(
 			`${caller} needs the global TextDecoder of the WHATWG Encoding Standard, which is not defined here.`,
 		);
 	}
-	return new TextDecoder('latin1');
+	return new TextDecoder('utf-8');
 }
 
 function classOf(content: string, offset: number, code: number) {

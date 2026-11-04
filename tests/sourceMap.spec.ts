@@ -480,7 +480,7 @@ describe('encodeMappings', () => {
 	});
 
 	test('throws on a field that is not an integer from 0 to 2 ** 30 - 1', () => {
-		for (const value of [-1, 1.5, 2 ** 30, Number.NaN, Infinity]) {
+		for (const value of [-1, -(2 ** 30), 1.5, 2 ** 30, 2 ** 31, 2 ** 32 + 1, Number.NaN, Infinity, -Infinity]) {
 			expect(() => encodeMappings([[[0]], [[1, 0, value, 0]]])).toThrow(
 				`The segment [1,0,${value},0] of line 1 has a field out of 0..2 ** 30 - 1.`,
 			);

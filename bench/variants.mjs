@@ -315,8 +315,8 @@ export const variants = [
 		replacements: [
 			{
 				file: 'sourceMap.ts',
-				find: `	const latin1 = decoder ??= createDecoder('renderWithSourceMap');
-	return renderWith(render, sourceName, new ByteWriter(latin1));`,
+				find: `	const utf8 = decoder ??= createDecoder('renderWithSourceMap');
+	return renderWith(render, sourceName, new ByteWriter(utf8));`,
 				replace: `	decoder ??= createDecoder('renderWithSourceMap');
 	return renderWith(render, sourceName, new ByteWriter());`,
 			},
@@ -336,7 +336,7 @@ export const variants = [
 			},
 			{
 				file: 'sourceMap.ts',
-				find: `	constructor(readonly latin1: { decode(input: Uint8Array): string }) {}
+				find: `	constructor(readonly utf8: { decode(input: Uint8Array): string }) {}
 `,
 				replace: '',
 			},
@@ -376,7 +376,7 @@ export const variants = [
 			},
 			{
 				file: 'sourceMap.ts',
-				find: `		this.chunks.push(this.latin1.decode(this.buffer.subarray(0, this.length)));
+				find: `		this.chunks.push(this.utf8.decode(this.buffer.subarray(0, this.length)));
 		return this.chunks.join('');`,
 				replace: `		return this.mappings;`,
 			},
