@@ -435,6 +435,15 @@ console.log(encodeMappings([[[0, 0, 0, 0], [4]], [], [[2, 0, 1, 3, 0]]]));
 // AAAA,I;;EACGA
 ```
 
+`decodeMappings(mappings)` reads a v3 `mappings` string as the segments of each line, as `encodeMappings` takes them, for code that works on the segments of a map it is given. A malformed string, or a field that ends out of 0 to 2 ** 30 - 1, throws. It needs no `TextDecoder`.
+
+```ts
+import { decodeMappings } from 'muggle-string';
+
+console.log(JSON.stringify(decodeMappings('AAAA,I;;EACGA')));
+// [[[0,0,0,0],[4]],[],[[2,0,1,3,0]]]
+```
+
 A range that has no source, or whose offsets are not integers within the content of its source, throws when it reaches the sink:
 
 ```ts
@@ -464,6 +473,7 @@ Offsets always point into the original text, also after other edits.
 | read the result | `rewrite.render(0, source.content.length, piece => text += rewritePieceText(piece))` |
 | get a source map | `renderWithSourceMap`, above |
 | get the segments of a source map | `renderWithDecodedSourceMap`, above |
+| read the segments of a given map | `decodeMappings`, above |
 
 ## What the techniques save
 

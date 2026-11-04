@@ -42,6 +42,7 @@ const base64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/
 
 // Made at the first call that needs them, so that importing the module only defines its functions and constants.
 let base64Codes: Uint8Array | undefined;
+let base64Values: Uint8Array | undefined;
 let decoder: { decode(input: Uint8Array): string } | undefined;
 let space: RegExp | undefined;
 let word: RegExp | undefined;
@@ -108,6 +109,98 @@ export function encodeMappings(mappings: readonly (readonly SourceMapSegment[])[
 		}
 	}
 	return writer.end();
+}
+
+/**
+ * The decoded `mappings` of v3 `mappings`, the segments of each line, one line more than its semicolons, as
+ * `encodeMappings` takes them, so that `encodeMappings` gives back the `mappings` that it writes. An empty segment, a
+ * segment of other than 1, 4 or 5 fields, a field that is not a base64 VLQ, or one that ends out of 0..2 ** 30 - 1
+ * throws.
+ */
+export function decodeMappings(mappings: string): SourceMapSegment[][] {
+	const values = base64Values ??= createBase64Values();
+	const { length } = mappings;
+	const lines: SourceMapSegment[][] = [];
+	const deltas = [0, 0, 0, 0, 0];
+	let index = 0;
+	let source = 0;
+	let sourceLine = 0;
+	let sourceColumn = 0;
+	let name = 0;
+	// a base64 VLQ, five bits a digit from the lowest, with the sign in its lowest bit
+	const delta = (line: number) => {
+		const start = index;
+		let rest = 0;
+		let scale = 1;
+		let digit;
+		do {
+			const code = mappings.charCodeAt(index++);
+			digit = code < 128 ? values[code]! : 64;
+			if (digit === 64) {
+				throw new SyntaxError(`The field at ${start} of the mappings, on line ${line}, is not a base64 VLQ.`);
+			}
+			rest += (digit & 31) * scale;
+			scale *= 32;
+		}
+		while (digit & 32);
+		return rest % 2 ? (1 - rest) / 2 : rest / 2;
+	};
+	for (let line = 0;; line++) {
+		const segments: SourceMapSegment[] = [];
+		lines.push(segments);
+		let column = 0;
+		let code = mappings.charCodeAt(index);
+		while (index < length && code !== semicolon) {
+			if (code === comma) {
+				throw new SyntaxError(`Line ${line} of the mappings has an empty segment.`);
+			}
+			let count = 0;
+			do {
+				if (count === 5) {
+					throw new SyntaxError(`A segment of line ${line} of the mappings has more than 5 fields.`);
+				}
+				deltas[count++] = delta(line);
+				code = mappings.charCodeAt(index);
+			}
+			while (index < length && code !== comma && code !== semicolon);
+			if (count === 2 || count === 3) {
+				throw new SyntaxError(
+					`A segment of line ${line} of the mappings has ${count} fields, where a segment has 1, 4 or 5.`,
+				);
+			}
+			const segment: SourceMapSegment = count === 1
+				? [column + deltas[0]!]
+				: count === 4
+				? [column + deltas[0]!, source + deltas[1]!, sourceLine + deltas[2]!, sourceColumn + deltas[3]!]
+				: [
+					column + deltas[0]!,
+					source + deltas[1]!,
+					sourceLine + deltas[2]!,
+					sourceColumn + deltas[3]!,
+					name + deltas[4]!,
+				];
+			column = fieldOf(segment, 0, line);
+			if (count > 1) {
+				source = fieldOf(segment, 1, line);
+				sourceLine = fieldOf(segment, 2, line);
+				sourceColumn = fieldOf(segment, 3, line);
+				if (count === 5) {
+					name = fieldOf(segment, 4, line);
+				}
+			}
+			segments.push(segment);
+			if (code === comma) {
+				code = mappings.charCodeAt(++index);
+				if (index === length || code === semicolon) {
+					throw new SyntaxError(`Line ${line} of the mappings has an empty segment.`);
+				}
+			}
+		}
+		if (index === length) {
+			return lines;
+		}
+		index++;
+	}
 }
 
 /** The field at `index` of `segment`, on `line`, which throws unless it is an integer from 0 to 2 ** 30 - 1. */
@@ -412,6 +505,15 @@ function createDecoder(caller: string) {
 		);
 	}
 	return new TextDecoder('utf-8');
+}
+
+/** The value of each ASCII char as a base64 digit, and 64 for a char that is not one. */
+function createBase64Values() {
+	const values = new Uint8Array(128).fill(64);
+	for (let digit = 0; digit < 64; digit++) {
+		values[base64.charCodeAt(digit)] = digit;
+	}
+	return values;
 }
 
 function classOf(content: string, offset: number, code: number) {

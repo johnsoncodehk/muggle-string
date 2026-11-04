@@ -4,6 +4,7 @@ import { describe, expect, test, vi } from 'vitest';
 import {
 	createSourceRewrite,
 	type DecodedSourceMap,
+	decodeMappings,
 	encodeMappings,
 	type Piece,
 	renderWithDecodedSourceMap,
@@ -134,6 +135,7 @@ function check(pieces: TestPiece[]) {
 	const decoded = renderDecoded(pieces);
 	expect(decoded).toEqual(decodedOf({ text, map }));
 	expect(encodeMappings(decoded.map.mappings)).toBe(map.mappings);
+	expect(decodeMappings(map.mappings)).toEqual(decoded.map.mappings);
 	const trace = new TraceMap(map as never);
 	const node = new NodeSourceMap(map);
 	expected(pieces).forEach((chars, line) => {
@@ -499,5 +501,71 @@ describe('encodeMappings', () => {
 		finally {
 			vi.unstubAllGlobals();
 		}
+	});
+});
+
+describe('decodeMappings', () => {
+	test('reads each line of v3 mappings as segments, by fields relative to the segment before', () => {
+		expect(decodeMappings('AAAA,I;;EACGA,CCDHC;ADEAD')).toEqual(
+			[[[0, 0, 0, 0], [4]], [], [[2, 0, 1, 3, 0], [3, 1, 0, 0, 1]], [[0, 0, 2, 0, 0]]],
+		);
+		expect(decodeMappings('gBAAA')).toEqual([[[16, 0, 0, 0]]]);
+		expect(decodeMappings('+/////B')).toEqual([[[2 ** 30 - 1]]]);
+		expect(decodeMappings('CAAA,DAAA')).toEqual([[[1, 0, 0, 0], [0, 0, 0, 0]]]);
+		expect(decodeMappings('')).toEqual([[]]);
+		expect(decodeMappings(';')).toEqual([[], []]);
+	});
+
+	test('gives back the mappings that encodeMappings writes', () => {
+		const mappings = 'AAAA,I;;EACGA,CCDHC;ADEAD;;';
+		expect(encodeMappings(decodeMappings(mappings))).toBe(mappings);
+	});
+
+	test('throws on an empty segment', () => {
+		for (const mappings of [',A', 'A,', 'A,,A', 'A,;', ';,']) {
+			expect(thrown(() => decodeMappings(mappings))).toMatch(/^SyntaxError: Line \d of the mappings has an empty segment\.$/);
+		}
+	});
+
+	test('throws on a segment of other than 1, 4 or 5 fields', () => {
+		expect(thrown(() => decodeMappings('A;AA'))).toBe(
+			'SyntaxError: A segment of line 1 of the mappings has 2 fields, where a segment has 1, 4 or 5.',
+		);
+		expect(thrown(() => decodeMappings('AAA'))).toBe(
+			'SyntaxError: A segment of line 0 of the mappings has 3 fields, where a segment has 1, 4 or 5.',
+		);
+		expect(thrown(() => decodeMappings('AAAAAA'))).toBe(
+			'SyntaxError: A segment of line 0 of the mappings has more than 5 fields.',
+		);
+	});
+
+	test('throws on a field that is not a base64 VLQ', () => {
+		expect(thrown(() => decodeMappings('AAAA,g'))).toBe(
+			'SyntaxError: The field at 5 of the mappings, on line 0, is not a base64 VLQ.',
+		);
+		expect(thrown(() => decodeMappings('A;g,A'))).toBe(
+			'SyntaxError: The field at 2 of the mappings, on line 1, is not a base64 VLQ.',
+		);
+		expect(thrown(() => decodeMappings('A!'))).toBe(
+			'SyntaxError: The field at 1 of the mappings, on line 0, is not a base64 VLQ.',
+		);
+		expect(thrown(() => decodeMappings('Aé'))).toBe(
+			'SyntaxError: The field at 1 of the mappings, on line 0, is not a base64 VLQ.',
+		);
+	});
+
+	test('throws on a field that ends out of 0..2 ** 30 - 1', () => {
+		expect(thrown(() => decodeMappings('D'))).toBe(
+			'RangeError: The segment [-1] of line 0 has a field out of 0..2 ** 30 - 1.',
+		);
+		expect(thrown(() => decodeMappings('A;AADA'))).toBe(
+			'RangeError: The segment [0,0,-1,0] of line 1 has a field out of 0..2 ** 30 - 1.',
+		);
+		expect(thrown(() => decodeMappings('ggggggggB'))).toBe(
+			`RangeError: The segment [${2 ** 39}] of line 0 has a field out of 0..2 ** 30 - 1.`,
+		);
+		expect(thrown(() => decodeMappings('+/////B,C'))).toBe(
+			`RangeError: The segment [${2 ** 30}] of line 0 has a field out of 0..2 ** 30 - 1.`,
+		);
 	});
 });
