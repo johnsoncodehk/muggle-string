@@ -398,7 +398,7 @@ describe('renderWithSourceMap', () => {
 			}
 			const pieces: TestPiece[] = [];
 			rewrite.render(0, length, piece => pieces.push(piece));
-			// Node 22 gives the last segment of mappings that do not end with a line the name of a segment before it.
+			// Node, 22 and 24, gives the last segment of mappings that do not end with a line the name of a segment before it.
 			check([...pieces, '\n']);
 		}
 	});
