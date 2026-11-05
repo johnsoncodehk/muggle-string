@@ -116,6 +116,8 @@ export function encodeMappings(mappings: readonly (readonly SourceMapSegment[])[
  * `encodeMappings` takes them, so that `encodeMappings` gives back the `mappings` that it writes. An empty segment, a
  * segment of other than 1, 4 or 5 fields, a field that is not a base64 VLQ, or one that ends out of 0..2 ** 30 - 1
  * throws.
+ *
+ * @internal
  */
 export function decodeMappings(mappings: string): SourceMapSegment[][] {
 	const values = base64Values ??= createBase64Values();

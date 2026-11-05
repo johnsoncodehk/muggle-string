@@ -894,3 +894,11 @@ test('the built package is ES modules that Node imports by the package name, wit
 	expect(stderr).toBe('');
 	expect(stdout.trim()).toBe('createSourceRewrite,decodeMappings,encodeMappings,renderWithDecodedSourceMap,renderWithSourceMap,rewritePieceText');
 });
+
+test('the declarations of the built package leave out what is marked @internal', () => {
+	for (const dir of ['out', 'out/cjs']) {
+		const declaration = fs.readFileSync(path.join(__dirname, '..', dir, 'sourceMap.d.ts'), 'utf8');
+		expect(declaration).toContain('encodeMappings');
+		expect(declaration).not.toContain('decodeMappings');
+	}
+});

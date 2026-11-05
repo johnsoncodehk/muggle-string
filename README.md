@@ -435,15 +435,6 @@ console.log(encodeMappings([[[0, 0, 0, 0], [4]], [], [[2, 0, 1, 3, 0]]]));
 // AAAA,I;;EACGA
 ```
 
-`decodeMappings(mappings)` reads a v3 `mappings` string as the segments of each line, as `encodeMappings` takes them, for code that works on the segments of a map it is given. A malformed string, or a field that ends out of 0 to 2 ** 30 - 1, throws. It needs no `TextDecoder`.
-
-```ts
-import { decodeMappings } from 'muggle-string';
-
-console.log(JSON.stringify(decodeMappings('AAAA,I;;EACGA')));
-// [[[0,0,0,0],[4]],[],[[2,0,1,3,0]]]
-```
-
 A range that has no source, or whose offsets are not integers within the content of its source, throws when it reaches the sink:
 
 ```ts
@@ -473,8 +464,6 @@ Offsets always point into the original text, also after other edits.
 | read the result | `rewrite.render(0, source.content.length, piece => text += rewritePieceText(piece))` |
 | get a source map | `renderWithSourceMap`, above |
 | get the segments of a source map | `renderWithDecodedSourceMap`, above |
-| read the segments of a given map | `decodeMappings`, above |
-
 ## What the techniques save
 
 Each technique in the table adds code. `npm run bench` builds the source and, for each technique, a variant with only that technique taken out (`bench/variants.mjs`), checks that all of them give the same output by hash, and times each in a fresh process on fixed inputs: about 1 MB of code-like text, and edits at distinct offsets from 4 writers. `bench/table.mjs` makes the tables below. Each figure is a single round, so differences of a few percent are near the noise. Node 24.15, Apple M2, in ms; cold is the first run in a process, warm the median of 20 runs after 20 more.
