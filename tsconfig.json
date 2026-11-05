@@ -6,7 +6,6 @@
 		"types": [],
 		"strict": true,
 		"declaration": true,
-		"stripInternal": true,
 		"sourceMap": true,
 		"noUnusedLocals": true,
 		"noUnusedParameters": true,
