@@ -195,11 +195,8 @@ class Edits<S extends Source, Data> {
 		}
 		const { keys, code } = this;
 		const size = code.length;
-		const sorted: number[] = [];
-		for (let index = 0; index < size; index++) {
-			sorted.push(index);
-		}
-		sorted.sort((a, b) => keys[a]! - keys[b]! || a - b);
+		// no key is below -4, the key of the code before all text
+		const sorted = sortOrder(keys, size, 1, 4);
 		const sortedKeys = new Int32Array(size);
 		const sortedCode: RewriteCode<S, Data>[] = [];
 		for (let index = 0; index < size; index++) {
@@ -617,11 +614,7 @@ class Rewrite<S extends Source, Data> {
 		let removals = this.removals;
 		const pairs = this.removalsSize >> 1;
 		if (!this.removalsSorted) {
-			const sorted: number[] = [];
-			for (let pair = 0; pair < pairs; pair++) {
-				sorted.push(pair);
-			}
-			sorted.sort((a, b) => removals[2 * a]! - removals[2 * b]!);
+			const sorted = sortOrder(removals, pairs, 2, 0);
 			const copy = new Int32Array(2 * pairs);
 			for (let index = 0; index < pairs; index++) {
 				copy[2 * index] = removals[2 * sorted[index]!]!;
@@ -647,6 +640,54 @@ class Rewrite<S extends Source, Data> {
 		this.removalsSize = merged;
 		this.removalsSorted = true;
 	}
+}
+
+/**
+ * The indexes 0..`size` - 1 in the order of their values, `values[index * stride] + bias`, which are not negative, and
+ * of the index among equal values: a radix sort by byte, which takes as long whatever the order of the values.
+ */
+function sortOrder(values: Int32Array, size: number, stride: number, bias: number) {
+	let order = new Int32Array(size);
+	for (let index = 0; index < size; index++) {
+		order[index] = index;
+	}
+	if (size <= 16) {
+		for (let index = 1; index < size; index++) {
+			const value = values[index * stride]!;
+			let at = index;
+			for (; at && values[order[at - 1]! * stride]! > value; at--) {
+				order[at] = order[at - 1]!;
+			}
+			order[at] = index;
+		}
+		return order;
+	}
+	let next = new Int32Array(size);
+	const counts = new Int32Array(256);
+	for (let shift = 0; shift < 32; shift += 8) {
+		counts.fill(0);
+		for (let index = 0; index < size; index++) {
+			counts[((values[index * stride]! + bias) >>> shift) & 255]!++;
+		}
+		// a byte that all values share moves none
+		if (counts[((values[0]! + bias) >>> shift) & 255] === size) {
+			continue;
+		}
+		let total = 0;
+		for (let digit = 0; digit < 256; digit++) {
+			const count = counts[digit]!;
+			counts[digit] = total;
+			total += count;
+		}
+		for (let index = 0; index < size; index++) {
+			const at = order[index]!;
+			next[counts[((values[at * stride]! + bias) >>> shift) & 255]!++] = at;
+		}
+		const swap = order;
+		order = next;
+		next = swap;
+	}
+	return order;
 }
 
 /**
