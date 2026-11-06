@@ -302,8 +302,13 @@ class Rewrite<S extends Source, Data> {
 		if (options) {
 			({ placeholder, ...data as {} } = options);
 		}
-		let parent: Cut<S, Data> | undefined;
-		let siblings = this.roots;
+		// the innermost cut that holds the range is inside any cut that holds it, so the search starts from the closest
+		// such cut around the last one made: cuts usually come in order, or each inside the last
+		let parent: Cut<S, Data> | undefined = this.cuts[this.cuts.length - 1];
+		while (parent && (start < parent.start || parent.end < end)) {
+			parent = parent.parent;
+		}
+		let siblings = parent ? parent.children ??= [] : this.roots;
 		while (true) {
 			let low = siblings.length;
 			// cuts usually come in order, after all of their level
