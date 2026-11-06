@@ -436,22 +436,6 @@ class ByteWriter implements SegmentWriter<string> {
 
 	constructor(readonly utf8: { decode(input: Uint8Array): string }) {}
 
-	encode(value: number) {
-		let rest = value < 0 ? (-value << 1) | 1 : value << 1;
-		const { buffer, digits } = this;
-		let length = this.length;
-		do {
-			let digit = rest & 31;
-			rest >>>= 5;
-			if (rest) {
-				digit |= 32;
-			}
-			buffer[length++] = digits[digit]!;
-		}
-		while (rest);
-		this.length = length;
-	}
-
 	// A segment takes at most a comma and five fields of 7 digits.
 	reserve() {
 		if (this.length > chunkSize - 36) {
@@ -462,23 +446,34 @@ class ByteWriter implements SegmentWriter<string> {
 
 	unmapped(column: number) {
 		this.reserve();
+		const { buffer, digits } = this;
+		let length = this.length;
 		if (this.lineHasSegment) {
-			this.buffer[this.length++] = comma;
+			buffer[length++] = comma;
 		}
-		this.encode(column - this.lastColumn);
+		this.length = writeVlq(buffer, length, digits, column - this.lastColumn);
 		this.lastColumn = column;
 		this.lineHasSegment = true;
 	}
 
 	mapped(column: number, source: number, line: number, sourceColumn: number, name: number) {
-		this.unmapped(column);
-		this.encode(source - this.lastSource);
-		this.encode(line - this.lastLine);
-		this.encode(sourceColumn - this.lastSourceColumn);
+		this.reserve();
+		const { buffer, digits } = this;
+		let length = this.length;
+		if (this.lineHasSegment) {
+			buffer[length++] = comma;
+		}
+		length = writeVlq(buffer, length, digits, column - this.lastColumn);
+		length = writeVlq(buffer, length, digits, source - this.lastSource);
+		length = writeVlq(buffer, length, digits, line - this.lastLine);
+		length = writeVlq(buffer, length, digits, sourceColumn - this.lastSourceColumn);
 		if (name !== -1) {
-			this.encode(name - this.lastName);
+			length = writeVlq(buffer, length, digits, name - this.lastName);
 			this.lastName = name;
 		}
+		this.length = length;
+		this.lastColumn = column;
+		this.lineHasSegment = true;
 		this.lastSource = source;
 		this.lastLine = line;
 		this.lastSourceColumn = sourceColumn;
@@ -495,6 +490,21 @@ class ByteWriter implements SegmentWriter<string> {
 		this.chunks.push(this.utf8.decode(this.buffer.subarray(0, this.length)));
 		return this.chunks.join('');
 	}
+}
+
+/** Writes `value` as a base64 VLQ, by `digits`, into `buffer` at `length`, and returns the length after it. */
+function writeVlq(buffer: Uint8Array, length: number, digits: Uint8Array, value: number) {
+	let rest = value < 0 ? (-value << 1) | 1 : value << 1;
+	do {
+		let digit = rest & 31;
+		rest >>>= 5;
+		if (rest) {
+			digit |= 32;
+		}
+		buffer[length++] = digits[digit]!;
+	}
+	while (rest);
+	return length;
 }
 
 /** The writer of decoded mappings, as an array of the segments of each line. */
