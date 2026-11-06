@@ -35,7 +35,10 @@
 		"build": "tsc && tsc -p tsconfig.cjs.json && node -e \"require('fs').writeFileSync('out/cjs/package.json', JSON.stringify({ type: 'commonjs' }) + '\\n')\"",
 		"prepare": "tsc && tsc -p tsconfig.cjs.json && node -e \"require('fs').writeFileSync('out/cjs/package.json', JSON.stringify({ type: 'commonjs' }) + '\\n')\"",
 		"test": "vitest run",
-		"bench": "node bench/run.mjs"
+		"bench": "node bench/suite/run.mjs",
+		"bench:smoke": "node bench/suite/run.mjs --smoke",
+		"bench:compare": "node bench/suite/compare.mjs",
+		"bench:techniques": "node bench/techniques/run.mjs"
 	},
 	"devDependencies": {
 		"@jridgewell/trace-mapping": "^0.3.31",
