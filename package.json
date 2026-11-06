@@ -1,6 +1,6 @@
 {
 	"name": "muggle-string",
-	"version": "1.0.3",
+	"version": "1.0.4",
 	"description": "Ranked, conflict-free rewrites of a source text, rendered as format-neutral pieces",
 	"type": "module",
 	"main": "./out/cjs/index.js",
