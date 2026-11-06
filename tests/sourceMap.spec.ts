@@ -196,6 +196,16 @@ describe('renderWithSourceMap', () => {
 		expect([at(7), at(17), at(18), at(22), at(28)]).toEqual([7, 17, 18, 22, 28]);
 	});
 
+	test('each ASCII char maps by its class, next to a word, whitespace and another char', () => {
+		let content = '';
+		for (let code = 0; code < 128; code++) {
+			const char = String.fromCharCode(code);
+			content += `a${char}a ${char} .${char}.\n`;
+		}
+		const ascii: TestSource = { name: 'ascii.js', content };
+		check([{ source: ascii, start: 0, end: content.length }]);
+	});
+
 	test('new text maps nowhere, and ends the mapping of the text before it on its line', () => {
 		const { map } = check([{ source: main, start: 0, end: 5 }, ' /* new */', { source: main, start: 5, end: 12 }]);
 		const trace = new TraceMap(map as never);
