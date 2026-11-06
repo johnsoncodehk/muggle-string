@@ -231,7 +231,10 @@ function renderWith<S extends Source, Mappings>(
 	sourceName: (source: S) => string,
 	writer: SegmentWriter<Mappings>,
 ) {
-	const sources = new Map<S, { index: number; lineStarts: number[]; length: number }>();
+	/** Each source with its index, the starts of its lines, and the line of the end of its last range. */
+	const sources = new Map<S, KnownSource>();
+	let lastSource: S | undefined;
+	let lastKnown: KnownSource | undefined;
 	const sourceNames: string[] = [];
 	const sourcesContent: string[] = [];
 	const names: string[] = [];
@@ -291,7 +294,7 @@ function renderWith<S extends Source, Mappings>(
 			for (let index = content.indexOf('\n'); index >= 0; index = content.indexOf('\n', index + 1)) {
 				lineStarts.push(index + 1);
 			}
-			known = { index: sources.size, lineStarts, length: content.length };
+			known = { index: sources.size, lineStarts, length: content.length, line: 0 };
 			sources.set(source, known);
 			sourceNames.push(sourceName(source));
 			sourcesContent.push(content);
@@ -320,25 +323,43 @@ function renderWith<S extends Source, Mappings>(
 			text += piece;
 			return;
 		}
-		const { index, lineStarts, length: sourceLength } = sourceOf(piece);
+		let known = lastKnown;
+		if (piece.source !== lastSource || !known) {
+			known = sourceOf(piece);
+			lastSource = piece.source;
+			lastKnown = known;
+		}
+		const { index, lineStarts, length: sourceLength } = known;
 		const { start, end } = piece;
 		// `>>> 0` keeps only integers from 0 to 2 ** 32 - 1, beyond any string length
 		if (start >>> 0 !== start || end >>> 0 !== end || start > end || end > sourceLength) {
 			throw new RangeError(`The range ${start}..${end} of ${sourceNames[index]} is out of 0..${sourceLength}.`);
 		}
 		pieceName = piece.text === undefined ? undefined : piece.name;
-		let line = 0;
+		// pieces mostly go on from the end of the last range of their source, on its line or the next
+		let line = known.line;
 		let high = lineStarts.length - 1;
+		if (lineStarts[line]! > start) {
+			high = line - 1;
+			line = 0;
+		}
+		else if (line === high || lineStarts[line + 1]! > start) {
+			high = line;
+		}
+		else if (++line === high || lineStarts[line + 1]! > start) {
+			high = line;
+		}
 		while (line < high) {
 			const mid = (line + high + 1) >> 1;
-			if (lineStarts[mid]! <= piece.start) {
+			if (lineStarts[mid]! <= start) {
 				line = mid;
 			}
 			else {
 				high = mid - 1;
 			}
 		}
-		let sourceColumn = piece.start - lineStarts[line]!;
+		known.line = line;
+		let sourceColumn = start - lineStarts[line]!;
 		if (piece.text === undefined) {
 			const { content } = piece.source;
 			let previous = -1;
@@ -367,6 +388,7 @@ function renderWith<S extends Source, Mappings>(
 				column++;
 				sourceColumn++;
 			}
+			known.line = line;
 			text += content.slice(piece.start, piece.end);
 		}
 		else if (piece.text) {
@@ -390,6 +412,13 @@ function renderWith<S extends Source, Mappings>(
 	}
 	const map = { version: 3 as const, sources: sourceNames, sourcesContent, names, mappings: writer.end() };
 	return { text, map };
+}
+
+interface KnownSource {
+	index: number;
+	lineStarts: number[];
+	length: number;
+	line: number;
 }
 
 /** The writer of v3 mappings, as the bytes of their digits in a reused buffer, decoded by chunk. */
