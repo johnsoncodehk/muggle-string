@@ -43,6 +43,7 @@ const base64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/
 // Made at the first call that needs them, so that importing the module only defines its functions and constants.
 let base64Codes: Uint8Array | undefined;
 let base64Values: Uint8Array | undefined;
+let asciiClasses: Uint8Array | undefined;
 let decoder: { decode(input: Uint8Array): string } | undefined;
 let space: RegExp | undefined;
 let word: RegExp | undefined;
@@ -362,6 +363,7 @@ function renderWith<S extends Source, Mappings>(
 		let sourceColumn = start - lineStarts[line]!;
 		if (piece.text === undefined) {
 			const { content } = piece.source;
+			const classes = asciiClasses ??= createAsciiClasses();
 			let previous = -1;
 			for (let offset = piece.start; offset < piece.end; offset++) {
 				const code = content.charCodeAt(offset);
@@ -380,7 +382,7 @@ function renderWith<S extends Source, Mappings>(
 						continue;
 					}
 				}
-				const kind = classOf(content, offset, code);
+				const kind = code < 128 ? classes[code]! : unicodeClassOf(content, offset);
 				if (kind !== previous || kind === CharClass.Other) {
 					mapTo(index, line, sourceColumn);
 				}
@@ -555,14 +557,22 @@ function createBase64Values() {
 	return values;
 }
 
-function classOf(content: string, offset: number, code: number) {
-	if (code < 128) {
-		return code === 32 || (code >= 9 && code <= 13)
-			? CharClass.Space
-			: (code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122)
-			? CharClass.Word
-			: CharClass.Other;
+/** The class of each ASCII char, which most code is, so a char of it takes a read of a table and no test. */
+function createAsciiClasses() {
+	const classes = new Uint8Array(128).fill(CharClass.Other);
+	for (let code = 0; code < 128; code++) {
+		if (code === 32 || (code >= 9 && code <= 13)) {
+			classes[code] = CharClass.Space;
+		}
+		else if ((code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122)) {
+			classes[code] = CharClass.Word;
+		}
 	}
+	return classes;
+}
+
+/** The class of the char at `offset` of `content`, which is not ASCII. */
+function unicodeClassOf(content: string, offset: number) {
 	const spaces = space ??= /\s/y;
 	spaces.lastIndex = offset;
 	if (spaces.test(content)) {
