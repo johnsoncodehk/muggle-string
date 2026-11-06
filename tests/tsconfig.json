@@ -1,0 +1,12 @@
+{
+	"compilerOptions": {
+		"strict": true,
+		"noEmit": true,
+		"target": "ES2022",
+		"lib": ["ES2022"],
+		"module": "preserve",
+		"moduleResolution": "bundler",
+		"types": ["node"]
+	},
+	"include": ["readme.spec.ts", "sourceRewrite.spec.ts"]
+}

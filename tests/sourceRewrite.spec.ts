@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
+import { createRequire } from 'node:module';
 import * as path from 'node:path';
 import { describe, expect, test } from 'vitest';
 import {
@@ -10,7 +11,6 @@ import {
 	type RewriteSlice,
 	type RewriteWriter,
 	rewritePieceText,
-	sliceMarker,
 	type SourceRewrite,
 } from '../src';
 
@@ -31,6 +31,11 @@ type TestPiece = Piece<RewriteOrigin<TestSource, TestData>>;
 /** A piece whose kept range names its source. */
 type NamedPiece = Piece<{ source: TestSource | string; data: string }>;
 
+/** Code that renders its pieces: a slice, or a view of a rewrite. */
+interface Renders {
+	render(sink: (piece: TestPiece) => void): void;
+}
+
 /** A source of pieces of generated code, which no rewrite edits. */
 const otherSource: TestSource = { name: other, content: 'wxyz' };
 
@@ -39,14 +44,14 @@ function createRewrite(name: string, content: string) {
 }
 
 /** The pieces of `slice`, as the render passes them. */
-function renderPieces(slice: RewriteSlice<TestSource, TestData>) {
+function renderPieces(slice: Renders) {
 	const pieces: TestPiece[] = [];
 	slice.render(piece => pieces.push(piece));
 	return pieces;
 }
 
 /** The pieces of `slice`: text, and kept source ranges, by the name of their source, with the data of their cut. */
-function collect(slice: RewriteSlice<TestSource, TestData>): NamedPiece[] {
+function collect(slice: Renders): NamedPiece[] {
 	return renderPieces(slice).map(piece =>
 		typeof piece === 'string' || piece.text !== undefined ? piece : { ...piece, source: piece.source.name }
 	);
@@ -56,17 +61,17 @@ function toText(pieces: TestPiece[]) {
 	return pieces.map(rewritePieceText).join('');
 }
 
-function render(slice: RewriteSlice<TestSource, TestData>) {
+function render(slice: Renders) {
 	return toText(renderPieces(slice));
 }
 
-/** The view `start`..`end` of `rewrite`, by default of the whole text, as a slice. */
+/** The view `start`..`end` of `rewrite`, by default of the whole text. */
 function view(
 	rewrite: SourceRewrite<TestSource, TestData>,
 	data = 'body',
 	start = 0,
 	end = rewrite.source.content.length,
-): RewriteSlice<TestSource, TestData> {
+): Renders {
 	return { render: sink => rewrite.render(start, end, sink, { data }) };
 }
 
@@ -281,42 +286,47 @@ describe('scenarios', () => {
 		]);
 	});
 
-	test('a slice is any code that renders, and renders through its own render', () => {
+	test('a cut of another copy of the package, such as its CommonJS build, is a slice', () => {
+		const cjs: typeof import('../src') = createRequire(__filename)('../out/cjs/index.js');
+		const inner = cjs.createSourceRewrite<TestSource, TestData>({ name: other, content: 'xyz' });
 		const rewrite = createRewrite(s, 'ab');
-		const body = view(rewrite);
-		const customSlice: RewriteSlice<TestSource, TestData> = {
-			[sliceMarker]: true,
-			render: sink => sink('x')
-		};
-		const emptySlice: RewriteSlice<TestSource, TestData> = {
-			[sliceMarker]: true,
-			render() {}
-		};
-		rewrite.insertAfter(1, [customSlice, emptySlice]);
-		expect(render(body)).toBe('axb');
+		rewrite.insertAfter(1, inner.cut(0, 3, { data: 'inner' }));
+		expect(render(view(rewrite))).toBe('axyzb');
 	});
 
-	test('a piece with a render field is not a slice and keeps its text', () => {
+	test('only a cut is a slice: another object that renders is a piece, passed on as it is', () => {
+		const rewrite = createRewrite(s, 'ab');
+		const renders = {
+			render() {
+				throw new Error('Only a cut renders.');
+			},
+		};
+		// @ts-expect-error only a cut is a slice
+		rewrite.insertAfter(1, renders);
+		expect(renderPieces(view(rewrite))[1]).toBe(renders);
+	});
+
+	test('a range with a render field keeps its text', () => {
 		const rewrite = createRewrite(s, 'abc');
-		const body = view(rewrite);
-		const pieceWithRender = {
+		const range = {
 			source: rewrite.source,
 			start: 1,
 			end: 2,
 			text: 'X',
-			data: 'piece',
-			render: () => { throw new Error('should not be called'); }
+			data: 'range',
+			render() {
+				throw new Error('A range does not render.');
+			},
 		};
-		rewrite.replace(1, 2, pieceWithRender);
-		expect(render(body)).toBe('aXc');
-		const pieces = renderPieces(body);
-		const middlePiece = pieces[1];
-		expect(typeof middlePiece).not.toBe('string');
-		if (typeof middlePiece !== 'string') {
-			expect(middlePiece.text).toBe('X');
-			expect(middlePiece.start).toBe(1);
-			expect(middlePiece.end).toBe(2);
-		}
+		// @ts-expect-error a range has no render
+		rewrite.replace(1, 2, range);
+		const pieces = renderPieces(view(rewrite));
+		expect(pieces).toEqual([
+			{ source: rewrite.source, start: 0, end: 1, data: 'body' },
+			range,
+			{ source: rewrite.source, start: 2, end: 3, data: 'body' },
+		]);
+		expect(pieces[1]).toBe(range);
 	});
 
 	test('removals of two writers that overlap the edges of a moved cut remove the chars of both cuts', () => {
@@ -914,6 +924,12 @@ test('the package imports only its own modules and depends on nothing', () => {
 	expect(pkg.peerDependencies).toBeUndefined();
 });
 
+test('the tests type check, so the errors they expect are errors', () => {
+	const tsc = path.join(__dirname, '../node_modules/typescript/bin/tsc');
+	const { stdout, stderr } = spawnSync(process.execPath, [tsc, '-p', __dirname], { encoding: 'utf8' });
+	expect(stdout + stderr).toBe('');
+});
+
 test('the built package is ES modules that Node imports by the package name, with no side effects', () => {
 	const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '../package.json'), 'utf8'));
 	expect(pkg.type).toBe('module');
@@ -924,7 +940,7 @@ test('the built package is ES modules that Node imports by the package name, wit
 		{ cwd: path.join(__dirname, '..'), encoding: 'utf8' },
 	);
 	expect(stderr).toBe('');
-	expect(stdout.trim()).toBe('createSourceRewrite,decodeMappings,encodeMappings,renderWithDecodedSourceMap,renderWithSourceMap,rewritePieceText,sliceMarker');
+	expect(stdout.trim()).toBe('createSourceRewrite,decodeMappings,encodeMappings,renderWithDecodedSourceMap,renderWithSourceMap,rewritePieceText');
 });
 
 test('the declarations of the built package declare decodeMappings and encodeMappings', () => {
