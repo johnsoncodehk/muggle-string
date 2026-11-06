@@ -83,7 +83,6 @@ The micro cases each isolate one cost. The Vue traces replay the calls that Vue'
 | `cut/placed-twice` | each slice placed at two places | a slice renders wherever it is placed |
 | `copy/ranges-twice` | the ranges of `cut/placed-twice` inserted as kept ranges, twice | Vue's `ctx.copy` repeats macro arguments this way; unlike a cut, the text also stays where it was, so this is a different operation, listed next to it for the cost of each |
 | `cut/nested` | cuts each inside the last, each placed in the one around it | the render recurses through slices |
-| `render/untouched` | rendering text without edits | the floor of a render: the cost per char of kept text |
 | `render/sink-only` | a later render to a sink that keeps no string | the render alone, without `rewritePieceText` and string building |
 | `render/views` | 5,000 views of 200 chars | a language server renders blocks of one rewrite as views |
 | `map/rewrite`, `map/rewrite-non-ascii` | `renderWithSourceMap` of a rendered rewrite, ASCII or not | the map writer on top of `render/sink-only`; non-ASCII text takes the slower char classes |

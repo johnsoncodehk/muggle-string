@@ -123,13 +123,15 @@ else if (mode === 'time') {
 	const expected = hash(coldResult);
 	const warm = [];
 	const warmStart = now();
-	while (warm.length < options.minWarmup || now() - warmStart < options.warmupMs) {
-		warm.push(once()[0]);
+	let warmup = 0;
+	while (warmup < options.minWarmup || now() - warmStart < options.warmupMs) {
+		// the last runs only, which show the code once it is optimized
+		warm[warmup++ % 64] = once()[0];
 		if (now() - warmStart > options.budgetMs) {
 			break;
 		}
 	}
-	const estimate = Math.max(1e-6, summarize(warm.slice(-Math.ceil(warm.length / 2))).median);
+	const estimate = Math.max(1e-6, summarize(warm).median);
 	const batch = Math.max(1, Math.min(10_000, Math.round(options.sampleMs / estimate)));
 	const samples = [];
 	const sampleStart = now();
@@ -146,7 +148,7 @@ else if (mode === 'time') {
 	if (hash(last) !== expected) {
 		throw new Error(`${caseName} ${size} gives another output once warm.`);
 	}
-	report({ hash: expected, cold, batch, warmup: warm.length, ...summarize(samples), samples });
+	report({ hash: expected, cold, batch, warmup, ...summarize(samples), samples });
 }
 else {
 	throw new Error(`There is no mode ${mode}.`);

@@ -394,18 +394,6 @@ export const micro = [
 		},
 	},
 	{
-		name: 'render/untouched',
-		description: 'a render to text of a rewrite without edits, per 1,000 chars',
-		sizes: [1_000_000],
-		smoke: 1000,
-		unit: 'kchar',
-		units: size => size / 1000,
-		setup(M, size) {
-			const source = makeSource(size);
-			return { run: () => rewriteText(M, M.createSourceRewrite(source)) };
-		},
-	},
-	{
 		name: 'render/sink-only',
 		description: 'a later render of writers/mixed-ordered to a sink that only counts lengths: the render without strings',
 		sizes: [100_000],

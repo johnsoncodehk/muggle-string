@@ -16,8 +16,8 @@ export function summarize(values) {
 	return {
 		median: median(values),
 		mad: relativeMad(values),
-		min: Math.min(...values),
-		max: Math.max(...values),
+		min: values.reduce((a, b) => a < b ? a : b),
+		max: values.reduce((a, b) => a > b ? a : b),
 		count: values.length,
 	};
 }
