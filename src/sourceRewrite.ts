@@ -112,7 +112,7 @@ export function createSourceRewrite<
 		writer: rank => rewrite.writer(rank),
 		cut: (start: number, end: number, options?: RewriteCutOptions<S, Data>) => rewrite.cut(start, end, options),
 		render: (start: number, end: number, sink: Sink<S, Data>, data?: Data) =>
-			rewrite.render(start, end, data ?? {} as Data, sink),
+			rewrite.render(start, end, data, sink),
 		unrendered: () => rewrite.cuts.filter(cut => cut.state === CutState.Unrendered),
 	};
 }
@@ -298,9 +298,13 @@ class Rewrite<S extends Source, Data> {
 			throw new RangeError(`The cut at ${start} moves no char.`);
 		}
 		let placeholder: RewriteCode<S, Data> | undefined;
-		let data = {} as Data;
+		let data: Data | undefined;
 		if (options) {
-			({ placeholder, ...data as {} } = options);
+			let rest: {};
+			({ placeholder, ...rest } = options);
+			if (Reflect.ownKeys(rest).length) {
+				data = rest as Data;
+			}
 		}
 		// the innermost cut that holds the range is inside any cut that holds it, so the search starts from the closest
 		// such cut around the last one made: cuts usually come in order, or each inside the last
@@ -357,7 +361,7 @@ class Rewrite<S extends Source, Data> {
 	}
 
 	/** The view `start`..`end`. */
-	render(start: number, end: number, data: Data, sink: (piece: Piece<RewriteOrigin<S, Data>>) => void) {
+	render(start: number, end: number, data: Data | undefined, sink: (piece: Piece<RewriteOrigin<S, Data>>) => void) {
 		const { length } = this.content;
 		if (!isRange(start, end, length)) {
 			throw new RangeError(`The range ${start}..${end} is out of 0..${length}.`);
@@ -427,7 +431,7 @@ class Rewrite<S extends Source, Data> {
 		removal: number,
 		children: readonly Cut<S, Data>[] | undefined,
 		index: number,
-		data: Data,
+		data: Data | undefined,
 		sink: (piece: Piece<RewriteOrigin<S, Data>>) => void,
 		tail: boolean,
 	) {
@@ -450,7 +454,11 @@ class Rewrite<S extends Source, Data> {
 						continue;
 					}
 					const runEnd = removal < removalsSize && removals[removal]! < to ? removals[removal]! : to;
-					sink({ ...data, source, start: pos, end: runEnd });
+					sink(
+						data
+							? { ...data, source, start: pos, end: runEnd }
+							: { source, start: pos, end: runEnd } as Piece<RewriteOrigin<S, Data>>,
+					);
 					pos = runEnd;
 				}
 				if (key === -8) {
@@ -810,7 +818,8 @@ class Cut<S extends Source, Data> implements RewriteSlice<S, Data> {
 		public parent: Cut<S, Data> | undefined,
 		readonly start: number,
 		readonly end: number,
-		readonly data: Data,
+		/** The fields of its kept pieces; none when it has none. */
+		readonly data: Data | undefined,
 		readonly placeholder: RewriteCode<S, Data> | undefined,
 	) {}
 
