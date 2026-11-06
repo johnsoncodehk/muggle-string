@@ -511,6 +511,7 @@ The baselines are the 0.4 segment array, whose every edit scans and splits the s
 - Offsets of edits, cuts and views that are not integers in 0..the length of the content throw.
 - `rewrite.writer(rank)` gives a writer with its own rank. At one position, code of a higher rank goes outside code of a lower rank. The rewrite itself is the outermost writer. Code of one writer at one position keeps call order.
 - `rewrite.cut(start, end, options)` takes a range out and returns a slice. The slice renders the range, with every edit inside it, where you place it. `options.placeholder` renders where the range was.
+- Only `cut` makes a slice, and a slice of one rewrite can be placed in another. Any other object in code is a piece, passed on as it is.
 - Cuts can be made in any order. A cut inside another moves with it. A cut that crosses another throws, naming both ranges.
 - Kept text of a slice carries the data of its cut, wherever the slice renders.
 - A slice renders wherever and as often as it is placed and rendered, as a view does. A slice placed inside its own range, also by `insertBefore` at its start, throws when it renders. `rewrite.unrendered()` lists the slices that have not rendered yet.

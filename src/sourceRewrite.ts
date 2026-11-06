@@ -1,12 +1,18 @@
 import type { Piece, Source } from './types.js';
 
+// `Symbol.for`, as a cut of another copy of the package, such as its CommonJS build, is a slice too
+const sliceBrand = Symbol.for('muggle-string.slice');
+
 /**
  * What a range of a rewrite carries beyond its offsets: its source, and the fields of the consumer that the view or the
  * slice that renders it gives, none by default.
  */
 export type RewriteOrigin<S extends Source, Data = {}> = Data & { source: S };
 
-/** Code written into a rewrite: pieces, slices, which render their cut in place, and arrays of code. */
+/**
+ * Code written into a rewrite: pieces, slices, which render their cut in place, and arrays of code. Only `cut` makes a
+ * slice; any other object is a piece.
+ */
 export type RewriteCode<S extends Source, Data = {}> =
 	| Piece<RewriteOrigin<S, Data>>
 	| RewriteSlice<S, Data>
@@ -36,7 +42,9 @@ export interface RewriteWriter<S extends Source, Data = {}> {
 	replace(start: number, end: number, code: RewriteCode<S, Data>): void;
 }
 
+/** What `cut` returns; no other object is a slice. */
 export interface RewriteSlice<S extends Source, Data = {}> {
+	readonly [sliceBrand]: true;
 	/** Passes the pieces of the slice to `sink`, in order: no string is empty, and kept text is a range without `text`. */
 	render(sink: (piece: Piece<RewriteOrigin<S, Data>>) => void): void;
 }
@@ -778,6 +786,7 @@ function isRange(start: number, end: number, length: number) {
 }
 
 class Cut<S extends Source, Data> implements RewriteSlice<S, Data> {
+	readonly [sliceBrand] = true as const;
 	/** The cuts directly inside, sorted and disjoint. */
 	children: Cut<S, Data>[] | undefined;
 	/** The cuts whose render renders code that it is placed in. */
@@ -843,5 +852,5 @@ function isCodeArray<S extends Source, Data>(code: RewriteCode<S, Data>): code i
 }
 
 function isSlice<S extends Source, Data>(code: RewriteCode<S, Data>): code is RewriteSlice<S, Data> {
-	return typeof (code as RewriteSlice<S, Data>).render === 'function';
+	return (code as RewriteSlice<S, Data>)[sliceBrand] === true;
 }

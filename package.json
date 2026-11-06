@@ -32,8 +32,8 @@
 		"url": "https://github.com/johnsoncodehk/muggle-string.git"
 	},
 	"scripts": {
-		"build": "tsc && tsc -p tsconfig.cjs.json && node -e \"require('fs').writeFileSync('out/cjs/package.json', '{\\\"type\\\":\\\"commonjs\\\"}\\\\n')\"",
-		"prepare": "tsc && tsc -p tsconfig.cjs.json && node -e \"require('fs').writeFileSync('out/cjs/package.json', '{\\\"type\\\":\\\"commonjs\\\"}\\\\n')\"",
+		"build": "tsc && tsc -p tsconfig.cjs.json && node -e \"require('fs').writeFileSync('out/cjs/package.json', JSON.stringify({ type: 'commonjs' }) + '\\n')\"",
+		"prepare": "tsc && tsc -p tsconfig.cjs.json && node -e \"require('fs').writeFileSync('out/cjs/package.json', JSON.stringify({ type: 'commonjs' }) + '\\n')\"",
 		"test": "vitest run",
 		"bench": "node bench/run.mjs"
 	},
