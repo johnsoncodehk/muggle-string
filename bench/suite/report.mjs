@@ -17,7 +17,11 @@ export function ms(value) {
 }
 
 function ns(value) {
-	return value >= 1000 ? `${(value / 1000).toPrecision(3)} µs` : `${value.toPrecision(3)} ns`;
+	return value >= 1e6
+		? `${ms(value / 1e6)} ms`
+		: value >= 1000
+		? `${(value / 1000).toPrecision(3)} µs`
+		: `${value.toPrecision(3)} ns`;
 }
 
 export function mb(bytes) {

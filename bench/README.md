@@ -10,7 +10,7 @@ Both build the source into `bench/.build` with the TypeScript of the repo, run e
 ## Running
 
 ```sh
-pnpm bench                         # every case, 3 rounds, time and memory: about 10 minutes
+pnpm bench                         # every case, 3 rounds, time and memory: about 5 minutes on 4 threads
 pnpm bench --filter vue/           # cases whose name contains vue/; repeat --filter for more
 pnpm bench --filter replace/ --quick   # 1 round, shorter sampling: a look while working
 pnpm bench --against master        # the working tree against master, interleaved, 5 rounds
@@ -58,7 +58,7 @@ Numbers are of the machine and the Node version they ran on. They are comparable
 ## JIT and measurement pitfalls
 
 - **One case per process.** V8 optimizes code for the shapes and types it has seen. A case that ran after another would run code that the other's types shaped, so its numbers would depend on the order of the cases. Every case runs in a fresh process instead.
-- **Warm and cold differ by 2 to 5 times.** Warm numbers show the steady state of a long-running process, such as a language server or a dev server compiling many files; cold numbers show a CLI build that compiles each file once. An optimization can help one and hurt the other: more code to compile is slower cold.
+- **Warm and cold differ by 2 to 20 times**, most at small sizes, where a cold run is mostly compiling. Warm numbers show the steady state of a long-running process, such as a language server or a dev server compiling many files; cold numbers show a CLI build that compiles each file once. An optimization can help one and hurt the other: more code to compile is slower cold.
 - **Inputs are monomorphic.** A case makes one kind of piece, so the code sees one shape. Real consumers mix shapes, as Vue mixes strings, ranges with `text`, kept ranges and arrays. The Vue traces mix them as Vue does; a change that wins only on the micro cases may lean on monomorphism that real code does not have.
 - **GC is part of the cost.** The samples are not run with GC off, and the time between them is not collected: an allocation that a run makes is paid by a later sample. Do not hide it by `gc()` between samples.
 - **Lazy work moves.** A rope string, a sort deferred to the first render, a map built on first read: the case must include the read that pays for it. That is why outputs are flattened in the timed code, and why `replace/ordered:edits` is listed next to `replace/ordered:first-render`: the edits alone look cheap because they defer the sort.
