@@ -288,6 +288,26 @@ describe('renderWithSourceMap', () => {
 		]);
 	});
 
+	test('random ranges of two sources, forward, back and across lines, map to their lines', () => {
+		const random = createRandom(2);
+		const chars = ['a', 'b', ' ', '\n', '\n', '.'];
+		const contentOf = () => Array.from({ length: 1 + random(40) }, () => chars[random(chars.length)]).join('');
+		for (let iteration = 0; iteration < 300; iteration++) {
+			const sources: TestSource[] = [{ name: 'a.js', content: contentOf() }, { name: 'b.js', content: contentOf() }];
+			const pieces: TestPiece[] = [];
+			for (let count = 1 + random(12); count > 0; count--) {
+				const source = sources[random(2)]!;
+				const start = random(source.content.length + 1);
+				const end = start + random(source.content.length - start + 1);
+				const kind = random(4);
+				pieces.push(
+					kind === 0 ? 'x\n' : kind === 1 ? { source, start, end, text: 'y\nz' } : { source, start, end },
+				);
+			}
+			check([...pieces, '\n']);
+		}
+	});
+
 	test('mappings longer than a chunk of the encoder are whole', () => {
 		const long: TestSource = { name: 'long.js', content: 'ab c;\n'.repeat(4000) };
 		// Each start ends a chunk at another point of a segment.
