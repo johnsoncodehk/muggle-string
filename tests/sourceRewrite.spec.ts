@@ -731,6 +731,48 @@ describe('properties', () => {
 		}
 	});
 
+	test('many random edits out of order render as the same edits made in order, equal places in call order', () => {
+		const random = createRandom(5);
+		for (let iteration = 0; iteration < 200; iteration++) {
+			// a longer text has keys of more than a byte
+			const length = 1 + random(iteration % 2 ? 60 : 600);
+			const edits = Array.from({ length: random(400) }, (_, index) => {
+				const rank = random(2);
+				const kind = random(3);
+				const start = kind === 2 ? random(length) : random(length + 1);
+				const end = kind === 2 ? start + 1 + random(Math.min(4, length - start)) : start;
+				// the side of a char that the edit goes to, in render order
+				const key = kind === 0
+					? start * 4 + (start === length ? 2 : 0)
+					: kind === 1
+					? (start ? (start - 1) * 4 + 2 : -4)
+					: start * 4 + 1;
+				const tag = `#${index}`;
+				return {
+					key,
+					apply: (writer: RewriteWriter<TestSource, TestData>) =>
+						kind === 0
+							? writer.insertBefore(start, tag)
+							: kind === 1
+							? writer.insertAfter(start, tag)
+							: writer.replace(start, end, tag),
+					rank,
+				};
+			});
+			const renderEdits = (list: typeof edits) => {
+				const rewrite = createRewrite(s, alphabet(length));
+				for (const edit of list) {
+					edit.apply(rewrite.writer(edit.rank));
+				}
+				return collect(view(rewrite));
+			};
+			const ordered = edits.map((edit, index) => ({ edit, index }))
+				.sort((a, b) => a.edit.key - b.edit.key || a.index - b.index)
+				.map(({ edit }) => edit);
+			expect(renderEdits(edits)).toEqual(renderEdits(ordered));
+		}
+	});
+
 	test('random nested cuts render every kept char once and verbatim in the fewest runs, every code once, edge code at the edges', () => {
 		const random = createRandom(3);
 		let nested = 0;
