@@ -294,19 +294,19 @@ describe('scenarios', () => {
 		expect(render(view(rewrite))).toBe('axyzb');
 	});
 
-	test('only a cut is a slice: another object that renders is a piece, passed on as it is', () => {
+	test('only cut makes a slice: any other object in code is a piece, passed on as it is', () => {
 		const rewrite = createRewrite(s, 'ab');
 		const renders = {
 			render() {
 				throw new Error('Only a cut renders.');
 			},
 		};
-		// @ts-expect-error only a cut is a slice
+		// @ts-expect-error only cut makes a slice
 		rewrite.insertAfter(1, renders);
 		expect(renderPieces(view(rewrite))[1]).toBe(renders);
 	});
 
-	test('a range with a render field keeps its text', () => {
+	test('a range is a piece whatever fields it carries', () => {
 		const rewrite = createRewrite(s, 'abc');
 		const range = {
 			source: rewrite.source,
@@ -318,7 +318,6 @@ describe('scenarios', () => {
 				throw new Error('A range does not render.');
 			},
 		};
-		// @ts-expect-error a range has no render
 		rewrite.replace(1, 2, range);
 		const pieces = renderPieces(view(rewrite));
 		expect(pieces).toEqual([
@@ -327,6 +326,13 @@ describe('scenarios', () => {
 			{ source: rewrite.source, start: 2, end: 3, data: 'body' },
 		]);
 		expect(pieces[1]).toBe(range);
+
+		const source = { content: 'abc' };
+		const flagged = createSourceRewrite<typeof source, { render: boolean }>(source);
+		flagged.replace(1, 2, { source, start: 1, end: 2, text: 'X', render: false });
+		const texts: string[] = [];
+		flagged.render(0, 3, piece => texts.push(rewritePieceText(piece)), { render: true });
+		expect(texts).toEqual(['a', 'X', 'c']);
 	});
 
 	test('removals of two writers that overlap the edges of a moved cut remove the chars of both cuts', () => {

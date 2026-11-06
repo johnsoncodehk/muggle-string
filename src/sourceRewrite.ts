@@ -10,7 +10,7 @@ const sliceBrand = Symbol.for('muggle-string.slice');
 export type RewriteOrigin<S extends Source, Data = {}> = Data & { source: S };
 
 /**
- * Code written into a rewrite: pieces, slices, which render their cut in place, and arrays of code. Only a cut is a
+ * Code written into a rewrite: pieces, slices, which render their cut in place, and arrays of code. Only `cut` makes a
  * slice; any other object is a piece.
  */
 export type RewriteCode<S extends Source, Data = {}> =
@@ -716,7 +716,7 @@ function place<S extends Source, Data>(
 			place(rewrite, placed, code[index]!, renderer);
 		}
 	}
-	else if (isSlice<S, Data>(code) && code instanceof Cut && code.rewrite === rewrite) {
+	else if (code instanceof Cut && code.rewrite === rewrite) {
 		if (code.renderers) {
 			code.renderers.push(renderer);
 		}
