@@ -1,16 +1,16 @@
-// node --allow-natives-syntax bench/worker.mjs <implementation> <workload> <size> [verify]
+// node --allow-natives-syntax bench/techniques/worker.mjs <implementation> <workload> <size> [verify]
 // Prints one JSON line: the hash of the output and, unless verifying, the time of the first iteration (cold) and the
 // median of 20 iterations after 20 more (warm), in ms.
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import * as path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { workloads } from './workloads.mjs';
 
 const [implementation, workload, sizeArg, mode] = process.argv.slice(2);
 const size = Number(sizeArg);
 const here = path.dirname(fileURLToPath(import.meta.url));
-const build = name => import(path.join(here, '.build', name, 'out/index.js'));
+const build = name => import(pathToFileURL(path.join(here, '../.build', name, 'out/index.js')).href);
 
 let M;
 let kind = 'rewrite';

@@ -1,4 +1,5 @@
-// node bench/table.mjs: the markdown tables of bench/.results, which bench/run.mjs also writes to table.md.
+// node bench/techniques/table.mjs: the markdown tables of bench/.results/techniques, which bench/techniques/run.mjs
+// also writes to table.md.
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -169,7 +170,7 @@ export function table(jsonl, conditions) {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-	const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), '.results');
+	const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), '../.results/techniques');
 	const conditions = JSON.parse(fs.readFileSync(path.join(dir, 'conditions.json'), 'utf8'));
 	process.stdout.write(table(fs.readFileSync(path.join(dir, 'results.jsonl'), 'utf8'), conditions));
 }

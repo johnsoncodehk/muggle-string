@@ -477,7 +477,7 @@ Offsets always point into the original text, also after other edits.
 
 ## What the techniques save
 
-Each technique in the table adds code. `npm run bench` builds the source and, for each technique, a variant with only that technique taken out (`bench/variants.mjs`), checks that all of them give the same output by hash, and times each in a fresh process on fixed inputs: about 1 MB of code-like text, and edits at distinct offsets from 4 writers. `bench/table.mjs` makes the tables below. Each figure is a single round, so differences of a few percent are near the noise. Node 24.15, Apple M2, in ms; cold is the first run in a process, warm the median of 20 runs after 20 more.
+Each technique in the table adds code. `npm run bench:techniques` builds the source and, for each technique, a variant with only that technique taken out (`bench/techniques/variants.mjs`), checks that all of them give the same output by hash, and times each in a fresh process on fixed inputs: about 1 MB of code-like text, and edits at distinct offsets from 4 writers. `bench/techniques/table.mjs` makes the tables below. For the time and memory of each operation and of Vue's patterns, and to compare a change with master, see the cases of `npm run bench` in [bench/README.md](bench/README.md). Each figure is a single round, so differences of a few percent are near the noise. Node 24.15, Apple M2, in ms; cold is the first run in a process, warm the median of 20 runs after 20 more.
 
 | Technique | Workload | Warm, with → without | Cold, with → without |
 |---|---|---|---|

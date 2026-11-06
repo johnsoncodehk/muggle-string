@@ -1,19 +1,19 @@
-// node bench/run.mjs [rounds]: one round by default, a fresh process for each implementation on each workload
+// node bench/techniques/run.mjs [rounds]: one round by default, a fresh process for each implementation on each workload
 // Builds the source and its variants, checks that every implementation gives the output of the source on every
-// workload it runs, then times each in fresh processes, interleaved, and writes bench/.results/results.jsonl and
-// bench/.results/table.md.
+// workload it runs, then times each in fresh processes, interleaved, and writes bench/.results/techniques/results.jsonl
+// and bench/.results/techniques/table.md.
 import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { build } from './build.mjs';
+import { build } from '../build.mjs';
 import { table } from './table.mjs';
 import { variants } from './variants.mjs';
 import { workloads } from './workloads.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const resultsDir = path.join(here, '.results');
+const resultsDir = path.join(here, '../.results/techniques');
 const processes = Number(process.argv[2] ?? 1);
 
 const sizes = {
