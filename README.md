@@ -529,7 +529,7 @@ The baselines are the 0.4 segment array, whose every edit scans and splits the s
 <summary>Pieces</summary>
 
 ```ts
-type Piece<Origin = unknown> = string | (Origin & { start: number; end: number; text?: string });
+type Piece<Origin = unknown> = string | (Origin & { start: number; end: number; text?: string; render?: never });
 ```
 
 - A string is new text.

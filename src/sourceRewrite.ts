@@ -1,4 +1,5 @@
 import type { Piece, Source } from './types.js';
+import { sliceMarker } from './types.js';
 
 /**
  * What a range of a rewrite carries beyond its offsets: its source, and the fields of the consumer that the view or the
@@ -37,6 +38,8 @@ export interface RewriteWriter<S extends Source, Data = {}> {
 }
 
 export interface RewriteSlice<S extends Source, Data = {}> {
+	/** The brand that identifies this as a slice. */
+	readonly [sliceMarker]: true;
 	/** Passes the pieces of the slice to `sink`, in order: no string is empty, and kept text is a range without `text`. */
 	render(sink: (piece: Piece<RewriteOrigin<S, Data>>) => void): void;
 }
@@ -778,6 +781,8 @@ function isRange(start: number, end: number, length: number) {
 }
 
 class Cut<S extends Source, Data> implements RewriteSlice<S, Data> {
+	/** The brand that identifies this as a slice. */
+	readonly [sliceMarker] = true as const;
 	/** The cuts directly inside, sorted and disjoint. */
 	children: Cut<S, Data>[] | undefined;
 	/** The cuts whose render renders code that it is placed in. */
@@ -843,5 +848,5 @@ function isCodeArray<S extends Source, Data>(code: RewriteCode<S, Data>): code i
 }
 
 function isSlice<S extends Source, Data>(code: RewriteCode<S, Data>): code is RewriteSlice<S, Data> {
-	return typeof (code as RewriteSlice<S, Data>).render === 'function';
+	return (code as RewriteSlice<S, Data>)[sliceMarker] === true;
 }

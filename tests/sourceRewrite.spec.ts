@@ -10,6 +10,7 @@ import {
 	type RewriteSlice,
 	type RewriteWriter,
 	rewritePieceText,
+	sliceMarker,
 	type SourceRewrite,
 } from '../src';
 
@@ -283,8 +284,39 @@ describe('scenarios', () => {
 	test('a slice is any code that renders, and renders through its own render', () => {
 		const rewrite = createRewrite(s, 'ab');
 		const body = view(rewrite);
-		rewrite.insertAfter(1, [{ render: sink => sink('x') }, { render() {} }]);
+		const customSlice: RewriteSlice<TestSource, TestData> = {
+			[sliceMarker]: true,
+			render: sink => sink('x')
+		};
+		const emptySlice: RewriteSlice<TestSource, TestData> = {
+			[sliceMarker]: true,
+			render() {}
+		};
+		rewrite.insertAfter(1, [customSlice, emptySlice]);
 		expect(render(body)).toBe('axb');
+	});
+
+	test('a piece with a render field is not a slice and keeps its text', () => {
+		const rewrite = createRewrite(s, 'abc');
+		const body = view(rewrite);
+		const pieceWithRender = {
+			source: rewrite.source,
+			start: 1,
+			end: 2,
+			text: 'X',
+			data: 'piece',
+			render: () => { throw new Error('should not be called'); }
+		};
+		rewrite.replace(1, 2, pieceWithRender);
+		expect(render(body)).toBe('aXc');
+		const pieces = renderPieces(body);
+		const middlePiece = pieces[1];
+		expect(typeof middlePiece).not.toBe('string');
+		if (typeof middlePiece !== 'string') {
+			expect(middlePiece.text).toBe('X');
+			expect(middlePiece.start).toBe(1);
+			expect(middlePiece.end).toBe(2);
+		}
 	});
 
 	test('removals of two writers that overlap the edges of a moved cut remove the chars of both cuts', () => {
@@ -892,7 +924,7 @@ test('the built package is ES modules that Node imports by the package name, wit
 		{ cwd: path.join(__dirname, '..'), encoding: 'utf8' },
 	);
 	expect(stderr).toBe('');
-	expect(stdout.trim()).toBe('createSourceRewrite,decodeMappings,encodeMappings,renderWithDecodedSourceMap,renderWithSourceMap,rewritePieceText');
+	expect(stdout.trim()).toBe('createSourceRewrite,decodeMappings,encodeMappings,renderWithDecodedSourceMap,renderWithSourceMap,rewritePieceText,sliceMarker');
 });
 
 test('the declarations of the built package declare decodeMappings and encodeMappings', () => {
