@@ -21,7 +21,7 @@ const rewrite = createSourceRewrite(source);
 for (const { index: start } of source.content.matchAll(/\bname\b/g)) {
 	rewrite.replace(start, start + 'name'.length, 'user');
 }
-rewrite.insertBefore(0, rewrite.cut(source.content.indexOf('const'), source.content.length));
+rewrite.insertAfter(0, rewrite.cut(source.content.indexOf('const'), source.content.length));
 
 let text = '';
 rewrite.render(0, source.content.length, piece => text += rewritePieceText(piece));
@@ -87,7 +87,7 @@ rewrite.replace(20, 21, '2');
 console.log(rewrite.unrendered().length);
 // 1
 
-rewrite.insertBefore(0, ['const __options = ', object, ';\n']);
+rewrite.insertAfter(0, ['const __options = ', object, ';\n']);
 let text = '';
 rewrite.render(0, source.content.length, piece => text += rewritePieceText(piece));
 console.log(text);
@@ -155,7 +155,7 @@ for (const { index: start } of source.content.matchAll(/\bname\b/g)) {
 	const end = start + 'name'.length;
 	rewrite.replace(start, end, { source, start, end, text: 'user', name: 'name' });
 }
-rewrite.insertBefore(0, rewrite.cut(source.content.indexOf('const'), source.content.length));
+rewrite.insertAfter(0, rewrite.cut(source.content.indexOf('const'), source.content.length));
 
 const { text, map } = renderWithSourceMap(
 	sink => rewrite.render(0, source.content.length, sink),
