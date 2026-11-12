@@ -1,4 +1,4 @@
-import { isRange } from './piece.js';
+import { isRange, notPiece, rangeProblem } from './piece.js';
 import type { Piece, Source } from './types.js';
 
 // `Symbol.for`, as a cut of another copy of the package, such as its CommonJS build, is a slice too
@@ -121,27 +121,24 @@ export function createSourceRewrite<
 type Sink<S extends Source, Data> = (piece: Piece<RewriteOrigin<S, Data>>) => void;
 
 /**
- * The generated text of `piece`: new text, the `text` of a range, or the content of its source that it keeps. A kept
- * range without a source, or whose `start` and `end` are not integers with 0 <= `start` <= `end` <= the length of the
- * content, throws. `renderWithSourceMap` and `renderWithDecodedSourceMap` read a range the same way.
+ * The generated text of `piece`: new text, the `text` of a range, or the content of its source that it keeps. It
+ * takes the pieces that `renderWithSourceMap` takes, by the same check: a range without a source, whose `start` and
+ * `end` are not integers with 0 <= `start` <= `end` <= the length of the content, or whose `text` or `name` is neither
+ * undefined nor a string, throws, with `text` or without.
  */
 export function rewritePieceText(piece: Piece<{ source: Source }>): string {
 	if (typeof piece === 'string') {
 		return piece;
 	}
+	if (typeof piece !== 'object' || piece === null) {
+		throw notPiece(piece);
+	}
+	const problem = rangeProblem(piece);
+	if (problem) {
+		throw new problem[0](`The range ${piece.start}..${piece.end} ${problem[1]}.`);
+	}
 	const { text } = piece;
-	if (text != null) {
-		return text;
-	}
-	const { start, end } = piece;
-	const content = piece.source?.content;
-	if (typeof content !== 'string') {
-		throw new TypeError(`The range ${start}..${end} has no source.`);
-	}
-	if (!isRange(start, end, content.length)) {
-		throw new RangeError(`The range ${start}..${end} is out of 0..${content.length}.`);
-	}
-	return content.slice(start, end);
+	return text === undefined ? piece.source.content.slice(piece.start, piece.end) : text;
 }
 
 const coreRank = 0x7fffffff;

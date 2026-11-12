@@ -632,7 +632,7 @@ describe('construction errors', () => {
 		expect(() => rewritePieceText({ source: {}, start: 0, end: 1 } as Parameters<typeof rewritePieceText>[0])).toThrow(
 			'The range 0..1 has no source.',
 		);
-		expect(rewritePieceText({ source, start: 0, end: 50, text: 'x' })).toBe('x');
+		expect(rewritePieceText({ source, start: 0, end: 3, text: 'x' })).toBe('x');
 		expect(rewritePieceText({ source, start: 3, end: 3 })).toBe('');
 	});
 
