@@ -1,4 +1,4 @@
-import { describe, isRange, notPiece, rangeProblem } from './piece.js';
+import { describe, isRange, notPiece, rangeProblem, type UncheckedRange } from './piece.js';
 import type { Piece, Source } from './types.js';
 
 // `Symbol.for`, as a cut of another copy of the package, such as its CommonJS build, is a slice too
@@ -16,7 +16,8 @@ export type RewriteOrigin<S extends Source, Data = undefined> =
 
 /**
  * Code written into a rewrite: pieces, slices, which render their cut in place, and arrays of code. Only `cut` makes a
- * slice; any other object is a piece.
+ * slice; any other object is a range. Code is checked when it is written: a value that is not code, or a range that no
+ * render takes, throws there. An array is read once, when it is written; a range is passed on as the object it is.
  */
 export type RewriteCode<S extends Source, Data = undefined> =
 	| Piece<RewriteOrigin<S, Data>>
@@ -252,20 +253,22 @@ class Rewrite<S extends Source, Data> {
 		const writer: RewriteWriter<S, Data> = {
 			insertBefore: (offset, code) => {
 				this.check(offset, offset);
+				code = this.accept(code, 'insertBefore', offset, offset);
 				edits.add(offset, offset === this.content.length ? Side.After : Side.Before, code);
 			},
 			insertAfter: (offset, code) => {
 				this.check(offset, offset);
+				code = this.accept(code, 'insertAfter', offset, offset);
 				edits.add(offset ? offset - 1 : -1, offset ? Side.After : Side.Before, code);
 			},
 			replace: (start, end, code) => {
 				this.check(start, end);
 				if (start < end) {
-					edits.add(start, Side.Slot, code);
+					edits.add(start, Side.Slot, this.accept(code, 'replace', start, end));
 					this.addRemoval(start, end);
 				}
 				else if (code !== '') {
-					edits.add(start, Side.Slot, code);
+					edits.add(start, Side.Slot, this.accept(code, 'replace', start, end));
 				}
 			},
 		};
@@ -280,6 +283,11 @@ class Rewrite<S extends Source, Data> {
 		if (!isRange(start, end, length)) {
 			throw new RangeError(`${start === end ? `The offset ${start}` : `The range ${start}..${end}`} is out of 0..${length}.`);
 		}
+	}
+
+	/** `code` as the rewrite holds it, once it is known to be code that renders, for the edit that `method` makes at `start`..`end`. */
+	private accept(code: RewriteCode<S, Data>, method: EditMethod, start: number, end: number) {
+		return typeof code === 'string' ? code : readCode<S, Data>(code, method, start, end);
 	}
 
 	/**
@@ -309,6 +317,9 @@ class Rewrite<S extends Source, Data> {
 				}
 			}
 			({ data, placeholder } = options);
+			if (placeholder !== undefined && typeof placeholder !== 'string') {
+				placeholder = readCode<S, Data>(placeholder, 'cut', start, end);
+			}
 		}
 		// the innermost cut that holds the range is inside any cut that holds it, so the search starts from the closest
 		// such cut around the last one made: cuts usually come in order, or each inside the last
@@ -759,6 +770,105 @@ function mergeEdits<S extends Source, Data>(
 	}
 }
 
+type EditMethod = 'insertBefore' | 'insertAfter' | 'replace';
+
+function nameEdit(method: EditMethod, start: number, end: number) {
+	return method === 'replace' ? `replace(${start}, ${end}, code)` : `${method}(${start}, code)`;
+}
+
+/** What is wrong with code: the class of its error, where in the code, and the rest of the sentence. */
+interface CodeProblem {
+	type: TypeErrorConstructor | RangeErrorConstructor;
+	path: string;
+	problem: string;
+}
+
+// deeper than any code that is written by hand or generated, and well within the call stack
+const maxCodeDepth = 500;
+
+/**
+ * `code`, which is not a string, as a rewrite holds it, once it is known to be code that renders: a range or a slice
+ * as it is, and an array as a flat copy of its values that are not empty strings, or as its one value, or as '' when
+ * it has none. Code with a value that is not a string, a range that the renders take, a slice or an array of them
+ * throws, for the call of `method` at `start`..`end` that writes it: an edit, or a cut, whose placeholder it is.
+ */
+function readCode<S extends Source, Data>(
+	code: RewriteCode<S, Data>,
+	method: EditMethod | 'cut',
+	start: number,
+	end: number,
+): RewriteCode<S, Data> {
+	let problem: CodeProblem | undefined;
+	if (isCodeArray<S, Data>(code)) {
+		const flat: RewriteCode<S, Data>[] = [];
+		problem = flatten(code, 0, flat);
+		code = flat.length > 1 ? flat : flat.length ? flat[0]! : '';
+	}
+	else {
+		problem = valueProblem(code);
+	}
+	if (problem) {
+		throw new problem.type(
+			`${method === 'cut' ? `${nameCutCall(start, end)}: the placeholder` : `${nameEdit(method, start, end)}: code`}${problem.path}${problem.problem}.`,
+		);
+	}
+	return code;
+}
+
+/** Adds the values of `code` and of the arrays in it that are not empty strings to `flat`, up to one that is not code. */
+function flatten(code: readonly unknown[], depth: number, flat: unknown[]): CodeProblem | undefined {
+	if (depth === maxCodeDepth) {
+		return {
+			type: TypeError,
+			path: '',
+			problem: ` is nested in more than ${maxCodeDepth} arrays, as an array that holds itself is`,
+		};
+	}
+	for (let index = 0; index < code.length; index++) {
+		const value = code[index];
+		if (typeof value === 'string') {
+			if (value) {
+				flat.push(value);
+			}
+			continue;
+		}
+		const nested = Array.isArray(value);
+		const problem = nested ? flatten(value, depth + 1, flat) : valueProblem(value);
+		if (problem) {
+			problem.path = `[${index}]${problem.path}`;
+			return problem;
+		}
+		if (!nested) {
+			flat.push(value);
+		}
+	}
+	return undefined;
+}
+
+/** What is wrong with `value`, which is neither a string nor an array, as code: it is no slice, and no range that the renders take. */
+function valueProblem(value: unknown): CodeProblem | undefined {
+	if (typeof value !== 'object' || value === null) {
+		return {
+			type: TypeError,
+			path: '',
+			problem: ` is ${describe(value)}, which is not code: a string, a range, a slice or an array of them`,
+		};
+	}
+	if ((value as Partial<RewriteSlice<Source, unknown>>)[sliceBrand] === true) {
+		return undefined;
+	}
+	const { start, end } = value as UncheckedRange;
+	if (typeof start !== 'number' || typeof end !== 'number') {
+		return {
+			type: TypeError,
+			path: '',
+			problem: ' is an object without a start and an end, which is not code: a string, a range, a slice or an array of them',
+		};
+	}
+	const problem = rangeProblem(value as UncheckedRange);
+	return problem && { type: problem[0], path: '', problem: `, the range ${start}..${end}, ${problem[1]}` };
+}
+
 /**
  * Records the cuts of `rewrite` placed in `code` as rendered by `renderer`, and adds each to `placed` the first time;
  * a view is no renderer. Not a closure in `compile`: a new closure at each freeze makes V8 deoptimize the call.
@@ -890,7 +1000,11 @@ class Cut<S extends Source, Data> implements RewriteSlice<S, Data> {
 	}
 }
 
-function renderCode<S extends Source, Data>(code: RewriteCode<S, Data>, sink: (piece: Piece<RewriteOrigin<S, Data>>) => void) {
+/** Renders code as a rewrite holds it. */
+function renderCode<S extends Source, Data>(
+	code: RewriteCode<S, Data>,
+	sink: (piece: Piece<RewriteOrigin<S, Data>>) => void,
+) {
 	if (typeof code === 'string') {
 		if (code) {
 			sink(code);
@@ -898,14 +1012,20 @@ function renderCode<S extends Source, Data>(code: RewriteCode<S, Data>, sink: (p
 	}
 	else if (isCodeArray<S, Data>(code)) {
 		for (let index = 0; index < code.length; index++) {
-			renderCode(code[index]!, sink);
+			const value = code[index]!;
+			if (typeof value !== 'string' && isSlice<S, Data>(value)) {
+				value.render(sink);
+			}
+			else {
+				sink(value as Piece<RewriteOrigin<S, Data>>);
+			}
 		}
 	}
 	else if (isSlice<S, Data>(code)) {
 		code.render(sink);
 	}
 	else {
-		sink(code as Piece<RewriteOrigin<S, Data>>);
+		sink(code);
 	}
 }
 

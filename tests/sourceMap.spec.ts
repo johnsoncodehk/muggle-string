@@ -368,14 +368,13 @@ describe('renderWithSourceMap', () => {
 		expect(render([{ source: main, start: 21, end: 21 }, { source: main, start: 0, end: 21, text: '' }]).text).toBe('');
 	});
 
-	test('a range that a rewrite renders as written is checked by the map', () => {
+	test('a range that the map refuses is refused by the edit of a rewrite that writes it', () => {
 		const rewrite = createSourceRewrite(main);
-		rewrite.replace(0, 5, { source: main, start: 0, end: 50, text: 'let' });
-		rewrite.render(0, 21, () => {});
-		const again = createSourceRewrite(main);
-		again.replace(0, 5, { source: main, start: 0, end: 50, text: 'let' });
-		expect(() => renderWithSourceMap(sink => again.render(0, 21, sink), source => source.name)).toThrow(
-			'The range 0..50 of main.js is out of 0..21.',
+		expect(() => rewrite.replace(0, 5, { source: main, start: 0, end: 50, text: 'let' })).toThrow(
+			new RangeError('replace(0, 5, code): code, the range 0..50, is out of 0..21.'),
+		);
+		expect(render([{ source: main, start: 0, end: 21 }])).toEqual(
+			renderWithSourceMap(sink => rewrite.render(0, 21, sink), (source: TestSource) => source.name),
 		);
 	});
 

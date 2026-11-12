@@ -103,7 +103,7 @@ console.log(rewrite.unrendered().length);
 
 The `placeholder` option renders where the cut was made.
 
-Only `cut` creates a slice. Any other object you pass is a piece and is handed through as-is.
+Only `cut` creates a slice. A range you pass is handed through as-is.
 
 To move a range up, use `insertAfter(to, slice)`. To move it down, use `insertBefore(to, slice)`. To move it to the very top or bottom, use `insertAfter(0, slice)` or `insertBefore(source.content.length, slice)`. A slice placed inside its own range can never render, because code inside the range moves with the slice. That includes `insertBefore` at its first character and `insertAfter` at its last one. Rendering then throws.
 
@@ -172,6 +172,33 @@ console.log(kept.join(' '));
 ```
 
 A range without data has no `data` field. When the `Data` type does not include `undefined`, as `{ view: string }` above, `cut` and `render` require the data.
+
+### Code is checked when you write it
+
+`insertBefore`, `insertAfter`, `replace` and the `placeholder` of `cut` take code: a string, a range, a slice, or an array of these. Anything else — `undefined`, `null`, `false`, a number — throws in the call that passes it, and so does a range that could not render: one without a source, with offsets outside its source, or with a `text` or a `name` that is not a string. The message names the call and the place in the code:
+
+```ts
+import { createSourceRewrite } from 'muggle-string';
+
+const source = { content: 'abc' };
+const rewrite = createSourceRewrite(source);
+
+function attempt(edit: () => void) {
+	try {
+		edit();
+	}
+	catch (error) {
+		console.log((error as Error).message);
+	}
+}
+
+attempt(() => rewrite.replace(2, 3, ['C', { source, start: 2, end: Infinity, text: 'c' }]));
+// replace(2, 3, code): code[1], the range 2..Infinity, is out of 0..3.
+```
+
+An edit that throws changes nothing. An array is read once, when you pass it; changing the array later does not change the rewrite. A range is not copied: the sink gets the same object.
+
+`rewritePieceText`, `renderWithSourceMap` and `renderWithDecodedSourceMap` accept and reject the same pieces, so text that renders also renders with a source map.
 
 ### Source maps
 
@@ -284,6 +311,7 @@ Common errors:
 
 - **Offset out of range** — offset is not within `0..content.length`
 - **Invalid rank** — rank is negative or not an integer
+- **Invalid code** — a value that is not a string, a range, a slice or an array of them, or a range that cannot render; thrown by the edit that passes it
 - **Unknown cut option** — `cut` takes only `data` and `placeholder`
 - **Crossing cuts** — a cut overlaps another cut (cuts can nest but not cross)
 - **Cut placed inside itself** — a slice is placed within its own range (including `insertBefore` at its start and `insertAfter` at its end), or within a slice that it renders
