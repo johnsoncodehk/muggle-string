@@ -8,7 +8,7 @@ I wrote muggle-string for [vuejs/language-tools](https://github.com/vuejs/langua
 
 `npm install muggle-string`
 
-Ships as ES modules. CommonJS code can `require` it on Node 20.19+, or 22.12+. `renderWithSourceMap` needs the global `TextDecoder` (available in Node and Bun); `renderWithDecodedSourceMap` does not.
+Ships as both ES modules and CommonJS, so `import` and `require` both work, on Node 12 and later. `renderWithSourceMap` needs the global `TextDecoder` (available in Node and Bun); `renderWithDecodedSourceMap` does not.
 
 ## Quick example
 
