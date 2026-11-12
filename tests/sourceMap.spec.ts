@@ -348,33 +348,105 @@ describe('renderWithSourceMap', () => {
 		}
 	});
 
-	test('a range that is not an integer range of the content of its source, or that has no source, is an error', () => {
+	test('a range without text that is not an integer range of the content of its source, or that has no source, is an error', () => {
 		for (const [start, end] of [[-1, 2], [1.5, 2], [3, 2], [0, 22], [Number.NaN, 2], [0, Infinity]]) {
 			expect(() => render([{ source: main, start: start!, end: end! }])).toThrow(
 				`The range ${start}..${end} of main.js is out of 0..21.`,
 			);
-			expect(() => render(['new', { source: main, start: start!, end: end!, text: 'x' }])).toThrow(
+			expect(() => render([{ source: main, start: 0, end: 5 }, { source: main, start: start!, end: end! }])).toThrow(
 				`The range ${start}..${end} of main.js is out of 0..21.`,
 			);
 		}
 		expect(() => render([{ start: 0, end: 1 } as TestPiece])).toThrow('The range 0..1 has no source.');
-		expect(() => render([{ source: null, start: 0, end: 1, text: 'x' } as unknown as TestPiece])).toThrow(
-			'The range 0..1 has no source.',
-		);
 		expect(() => render([{ source: { name: 'empty' }, start: 0, end: 0 } as TestPiece])).toThrow(
 			'The range 0..0 has no source.',
 		);
 		expect(render([{ source: main, start: 21, end: 21 }, { source: main, start: 0, end: 21, text: '' }]).text).toBe('');
 	});
 
-	test('a range that a rewrite renders as written is checked by the map', () => {
+	test('the text of a range that is no range of its source, or that has no source, is new text, as rewritePieceText gives it unchecked', () => {
+		const after: TestPiece = { source: other, start: 0, end: 3 };
+		for (const [start, end] of [[-1, 2], [1.5, 2], [3, 2], [0, 22], [Number.NaN, 2], [0, Infinity]]) {
+			const range: TestPiece = { source: main, start: start!, end: end!, text: 'x\ny', name: 'n' };
+			expect(rewritePieceText(range)).toBe('x\ny');
+			// no mapping, no name, and no source of it
+			expect(render(['new', range, after])).toEqual(render(['new', 'x\ny', after]));
+			expect(render([{ source: main, start: 0, end: 5 }, range, after])).toEqual(
+				render([{ source: main, start: 0, end: 5 }, 'x\ny', after]),
+			);
+		}
+		const noSource = { source: null, start: 0, end: 1, text: 'x' } as unknown as TestPiece;
+		expect(rewritePieceText(noSource)).toBe('x');
+		expect(render([noSource])).toEqual(render(['x']));
+		expect(render([{ source: { name: 'empty' }, start: 0, end: 0, text: 'x' } as TestPiece])).toEqual(render(['x']));
+		expect(render([{ source: main, start: 0, end: 22, text: '' }])).toEqual(render(['']));
+	});
+
+	test('a range with the text null is a range without text, as rewritePieceText reads it', () => {
+		const range = { source: main, start: 0, end: 12, text: null, name: 'n' } as unknown as TestPiece;
+		expect(rewritePieceText(range)).toBe('const a = 1;');
+		expect(render(['new', range])).toEqual(render(['new', { source: main, start: 0, end: 12 }]));
+		const out = { source: main, start: 0, end: 22, text: null } as unknown as TestPiece;
+		expect(() => rewritePieceText(out)).toThrow('The range 0..22 is out of 0..21.');
+		expect(() => render([out])).toThrow('The range 0..22 of main.js is out of 0..21.');
+	});
+
+	test('a text of a range that is no string is joined to the text, as the value that rewritePieceText gives for it is', () => {
+		for (const value of [0, 5, false, true, Number.NaN, ['a', 'b']]) {
+			const range = { source: main, start: 6, end: 7, text: value, name: 'a' } as unknown as TestPiece;
+			expect(rewritePieceText(range)).toBe(value);
+			expect(render(['new', range])).toEqual(render(['new', { source: main, start: 6, end: 7, text: `${value}`, name: 'a' }]));
+			expect(render([{ ...range, end: 22 } as TestPiece])).toEqual(render([`${value}`]));
+		}
+		expect(render([{ source: main, start: 6, end: 7, text: [] } as unknown as TestPiece])).toEqual(
+			render([{ source: main, start: 6, end: 7, text: '' }]),
+		);
+		const symbol = { source: main, start: 6, end: 7, text: Symbol('a') } as unknown as TestPiece;
+		expect(() => `${rewritePieceText(symbol)}`).toThrow(TypeError);
+		expect(() => render([symbol])).toThrow(TypeError);
+	});
+
+	test('the map renders give the text that the values of rewritePieceText join to, and throw where the text render or the join throws', () => {
+		const sources = [main, other, undefined, null, {}, { name: 'n', content: 5 }, { name: 'empty', content: '' }];
+		const ranges = [[0, 0], [0, 5], [5, 5], [21, 21], [-1, 2], [1.5, 2], [3, 2], [0, 22], [Number.NaN, 2], [0, Infinity], ['0', '1'], [undefined, undefined]];
+		const texts = [undefined, null, '', 'x', 'x\ny', 0, 5, false, true, ['a', 'b'], Symbol('a'), Object.create(null)];
+		const attempt = (run: () => string) => {
+			try {
+				return run();
+			}
+			catch {
+				return undefined;
+			}
+		};
+		let agreed = 0;
+		let threw = 0;
+		for (const source of sources) {
+			for (const [start, end] of ranges) {
+				for (const text of texts) {
+					const range = { source, start, end, text, name: 'n' } as unknown as TestPiece;
+					const joined = attempt(() => `${rewritePieceText(range)}`);
+					expect(attempt(() => render([range]).text)).toBe(joined);
+					expect(attempt(() => renderDecoded([range]).text)).toBe(joined);
+					expect(attempt(() => render(['new', { source: main, start: 0, end: 5 }, range]).text)).toBe(
+						joined === undefined ? undefined : `newconst${joined}`,
+					);
+					joined === undefined ? threw++ : agreed++;
+				}
+			}
+		}
+		expect([agreed, threw]).toEqual([688, 320]);
+	});
+
+	test('a range with text that a rewrite renders as written maps nowhere where it is no range of its source', () => {
 		const rewrite = createSourceRewrite(main);
 		rewrite.replace(0, 5, { source: main, start: 0, end: 50, text: 'let' });
-		rewrite.render(0, 21, () => {});
+		const pieces: TestPiece[] = [];
+		rewrite.render(0, 21, piece => pieces.push(piece));
+		expect(pieces.map(rewritePieceText).join('')).toBe('let a = 1;\nlog(a);\n');
 		const again = createSourceRewrite(main);
-		again.replace(0, 5, { source: main, start: 0, end: 50, text: 'let' });
-		expect(() => renderWithSourceMap(sink => again.render(0, 21, sink), source => source.name)).toThrow(
-			'The range 0..50 of main.js is out of 0..21.',
+		again.replace(0, 5, 'let');
+		expect(renderWithSourceMap(sink => rewrite.render(0, 21, sink), source => source.name)).toEqual(
+			renderWithSourceMap(sink => again.render(0, 21, sink), source => source.name),
 		);
 	});
 
@@ -468,16 +540,31 @@ describe('renderWithDecodedSourceMap', () => {
 		const bad: TestPiece[][] = [
 			...[[-1, 2], [1.5, 2], [3, 2], [0, 22], [Number.NaN, 2], [0, Infinity]].flatMap(([start, end]) => [
 				[{ source: main, start: start!, end: end! }],
-				['new', { source: main, start: start!, end: end!, text: 'x' }],
+				['new', { source: main, start: start!, end: end!, text: null } as unknown as TestPiece],
 			]),
 			[{ start: 0, end: 1 } as TestPiece],
-			[{ source: null, start: 0, end: 1, text: 'x' } as unknown as TestPiece],
 			[{ source: { name: 'empty' }, start: 0, end: 0 } as TestPiece],
 		];
 		for (const pieces of bad) {
 			const error = thrown(() => render(pieces));
 			expect(error).toBeDefined();
 			expect(thrown(() => renderDecoded(pieces))).toBe(error);
+		}
+	});
+
+	test('gives the map of renderWithSourceMap for the text of a range that is no range of its source, for the text null and for a text that is no string', () => {
+		const lists: TestPiece[][] = [
+			...[[-1, 2], [0, 22], [Number.NaN, 2]].map(([start, end]): TestPiece[] => [
+				{ source: main, start: 0, end: 5 },
+				{ source: main, start: start!, end: end!, text: 'x\ny', name: 'n' },
+				{ source: other, start: 0, end: 3 },
+			]),
+			[{ source: null, start: 0, end: 1, text: 'x' } as unknown as TestPiece, { source: main, start: 0, end: 5 }],
+			['new', { source: main, start: 0, end: 12, text: null } as unknown as TestPiece],
+			['new', { source: main, start: 6, end: 7, text: 5, name: 'a' } as unknown as TestPiece],
+		];
+		for (const pieces of lists) {
+			expect(renderDecoded(pieces)).toEqual(decodedOf(render(pieces)));
 		}
 	});
 

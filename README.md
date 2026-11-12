@@ -177,6 +177,7 @@ console.log(JSON.stringify(map));
 Mapping rules:
 - Kept text maps at token boundaries (line starts, word starts, whitespace runs, individual punctuation)
 - Generated text (ranges with `text`) maps to the start of the source range
+- Generated text of a range that is not a range of its source maps to nothing, like a new string
 - New strings map to nothing
 
 `renderWithDecodedSourceMap` gives you the decoded segments instead of the encoded `mappings` string. Use `encodeMappings` and `decodeMappings` to convert between formats.

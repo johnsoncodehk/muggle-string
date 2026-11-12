@@ -1,3 +1,4 @@
+import { isRange } from './piece.js';
 import type { Piece, Source } from './types.js';
 
 // `Symbol.for`, as a cut of another copy of the package, such as its CommonJS build, is a slice too
@@ -122,7 +123,7 @@ type Sink<S extends Source, Data> = (piece: Piece<RewriteOrigin<S, Data>>) => vo
 /**
  * The generated text of `piece`: new text, the `text` of a range, or the content of its source that it keeps. A kept
  * range without a source, or whose `start` and `end` are not integers with 0 <= `start` <= `end` <= the length of the
- * content, throws.
+ * content, throws. `renderWithSourceMap` and `renderWithDecodedSourceMap` read a range the same way.
  */
 export function rewritePieceText(piece: Piece<{ source: Source }>): string {
 	if (typeof piece === 'string') {
@@ -833,10 +834,6 @@ const enum CutState {
 
 function nameCut(cut: { start: number; end: number }) {
 	return `The cut ${cut.start}..${cut.end}`;
-}
-
-function isRange(start: number, end: number, length: number) {
-	return Number.isInteger(start) && Number.isInteger(end) && start >= 0 && start <= end && end <= length;
 }
 
 class Cut<S extends Source, Data> implements RewriteSlice<S, Data> {

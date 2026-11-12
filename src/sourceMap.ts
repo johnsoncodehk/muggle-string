@@ -1,3 +1,4 @@
+import { isRange } from './piece.js';
 import type { Piece, Source } from './types.js';
 
 /** A source map of generated text to its sources, in the v3 format. */
@@ -71,8 +72,10 @@ const enum CharClass {
  * text starts with, as of a symbol that `text` renames; it goes in `names`, for the first segment of the range on a
  * char. Kept text is its own name, so the `name` of a range without `text` goes nowhere.
  *
- * A range without a source, an object with a string `content`, or whose `start` and `end` are not integers with
- * 0 <= `start` <= `end` <= the length of the content, throws when it reaches the sink.
+ * It reads a range as `rewritePieceText` does, so it gives the text that `rewritePieceText` gives and throws where
+ * that throws: a `text` of null is no text, and a range without `text` that has no source, an object with a string
+ * `content`, or whose `start` and `end` are not integers with 0 <= `start` <= `end` <= the length of the content,
+ * throws when it reaches the sink. The `text` of such a range has no range to map to, and is new text.
  */
 export function renderWithSourceMap<S extends Source>(
 	render: (sink: (piece: Piece<{ source: S; name?: string }>) => void) => void,
@@ -283,60 +286,69 @@ function renderWith<S extends Source, Mappings>(
 		}
 		column += code.length - lineStart;
 	};
-	const sourceOf = (piece: Exclude<Piece<{ source: S }>, string>) => {
-		const { source } = piece;
-		let known = sources.get(source);
-		if (!known) {
-			const content = source?.content;
-			if (typeof content !== 'string') {
-				throw new TypeError(`The range ${piece.start}..${piece.end} has no source.`);
-			}
-			const lineStarts = [0];
-			for (let index = content.indexOf('\n'); index >= 0; index = content.indexOf('\n', index + 1)) {
-				lineStarts.push(index + 1);
-			}
-			known = { index: sources.size, lineStarts, length: content.length, line: 0 };
-			sources.set(source, known);
-			sourceNames.push(sourceName(source));
-			sourcesContent.push(content);
+	const addSource = (source: S, content: string) => {
+		const lineStarts = [0];
+		for (let index = content.indexOf('\n'); index >= 0; index = content.indexOf('\n', index + 1)) {
+			lineStarts.push(index + 1);
 		}
+		const known = { index: sources.size, lineStarts, length: content.length, line: 0 };
+		sources.set(source, known);
+		sourceNames.push(sourceName(source));
+		sourcesContent.push(content);
 		return known;
+	};
+
+	/** Text that maps nowhere. */
+	const unmapped = (code: string) => {
+		let lineStart = 0;
+		while (true) {
+			const lineEnd = code.indexOf('\n', lineStart);
+			const end = lineEnd < 0 ? code.length : lineEnd;
+			if (end > lineStart && (lineEndsMapped || !lineHasSegment)) {
+				segment();
+				lineEndsMapped = false;
+				endsWithoutSource = true;
+			}
+			column += end - lineStart;
+			if (lineEnd < 0) {
+				break;
+			}
+			newLine();
+			lineStart = lineEnd + 1;
+		}
+		text += code;
 	};
 
 	render(piece => {
 		if (typeof piece === 'string') {
-			let lineStart = 0;
-			while (true) {
-				const lineEnd = piece.indexOf('\n', lineStart);
-				const end = lineEnd < 0 ? piece.length : lineEnd;
-				if (end > lineStart && (lineEndsMapped || !lineHasSegment)) {
-					segment();
-					lineEndsMapped = false;
-					endsWithoutSource = true;
-				}
-				column += end - lineStart;
-				if (lineEnd < 0) {
-					break;
-				}
-				newLine();
-				lineStart = lineEnd + 1;
-			}
-			text += piece;
+			unmapped(piece);
 			return;
 		}
-		let known = lastKnown;
-		if (piece.source !== lastSource || !known) {
-			known = sourceOf(piece);
-			lastSource = piece.source;
-			lastKnown = known;
-		}
-		const { index, lineStarts, length: sourceLength } = known;
+		const source = piece.source;
 		const { start, end } = piece;
-		// `>>> 0` keeps only integers from 0 to 2 ** 32 - 1, beyond any string length
-		if (start >>> 0 !== start || end >>> 0 !== end || start > end || end > sourceLength) {
-			throw new RangeError(`The range ${start}..${end} of ${sourceNames[index]} is out of 0..${sourceLength}.`);
+		let known = source === lastSource ? lastKnown : sources.get(source);
+		// a source is an object with a string `content`
+		const content = known ? undefined : source?.content;
+		const length = known ? known.length : typeof content === 'string' ? content.length : undefined;
+		// as `rewritePieceText` reads a range: its `text` unless that is undefined or null, joined to the text as it is
+		const generated = piece.text == null ? undefined : '' + piece.text;
+		if (length === undefined || !isRange(start, end, length)) {
+			if (generated === undefined) {
+				throw length === undefined
+					? new TypeError(`The range ${start}..${end} has no source.`)
+					: new RangeError(
+						`The range ${start}..${end} of ${known ? sourceNames[known.index] : sourceName(source)} is out of 0..${length}.`,
+					);
+			}
+			// as `rewritePieceText` gives the text of a range that is not one of its source, which has nowhere to map: new text
+			unmapped(generated);
+			return;
 		}
-		pieceName = piece.text === undefined ? undefined : piece.name;
+		known ??= addSource(source, content!);
+		lastSource = source;
+		lastKnown = known;
+		const { index, lineStarts } = known;
+		pieceName = generated === undefined ? undefined : piece.name;
 		// pieces mostly go on from the end of the last range of their source, on its line or the next
 		let line = known.line;
 		let high = lineStarts.length - 1;
@@ -361,8 +373,8 @@ function renderWith<S extends Source, Mappings>(
 		}
 		known.line = line;
 		let sourceColumn = start - lineStarts[line]!;
-		if (piece.text === undefined) {
-			const { content } = piece.source;
+		if (generated === undefined) {
+			const { content } = source;
 			const classes = asciiClasses ??= createAsciiClasses();
 			let previous = -1;
 			for (let offset = piece.start; offset < piece.end; offset++) {
@@ -393,8 +405,8 @@ function renderWith<S extends Source, Mappings>(
 			known.line = line;
 			text += content.slice(piece.start, piece.end);
 		}
-		else if (piece.text) {
-			const code = piece.text;
+		else if (generated) {
+			const code = generated;
 			let lineStart = 0;
 			for (let lineEnd = code.indexOf('\n'); lineEnd >= 0 && lineEnd < code.length - 1; lineEnd = code.indexOf('\n', lineEnd + 1)) {
 				mapTo(index, line, sourceColumn, lineEnd > lineStart);
