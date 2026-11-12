@@ -214,6 +214,7 @@ All offsets point into the original text, even after edits.
 ### Rendering
 
 - `render(start, end, sink, data?)` — call `sink(piece)` for each piece in the range
+- `slice.render(sink)` — call `sink(piece)` for each piece of a slice
 - `rewritePieceText(piece)` — extract the text from a piece (string or range)
 
 ### Pieces
