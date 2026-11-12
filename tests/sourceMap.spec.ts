@@ -393,10 +393,11 @@ describe('renderWithSourceMap', () => {
 
 	test('a text of a range that is no string is joined to the text, as the value that rewritePieceText gives for it is', () => {
 		for (const value of [0, 5, false, true, Number.NaN, ['a', 'b']]) {
-			const range = { source: main, start: 6, end: 7, text: value, name: 'a' } as unknown as TestPiece;
+			const fields = { source: main, start: 6, end: 7, text: value, name: 'a' };
+			const range = fields as unknown as TestPiece;
 			expect(rewritePieceText(range)).toBe(value);
 			expect(render(['new', range])).toEqual(render(['new', { source: main, start: 6, end: 7, text: `${value}`, name: 'a' }]));
-			expect(render([{ ...range, end: 22 } as TestPiece])).toEqual(render([`${value}`]));
+			expect(render([{ ...fields, end: 22 } as unknown as TestPiece])).toEqual(render([`${value}`]));
 		}
 		expect(render([{ source: main, start: 6, end: 7, text: [] } as unknown as TestPiece])).toEqual(
 			render([{ source: main, start: 6, end: 7, text: '' }]),
@@ -445,8 +446,8 @@ describe('renderWithSourceMap', () => {
 		expect(pieces.map(rewritePieceText).join('')).toBe('let a = 1;\nlog(a);\n');
 		const again = createSourceRewrite(main);
 		again.replace(0, 5, 'let');
-		expect(renderWithSourceMap(sink => rewrite.render(0, 21, sink), source => source.name)).toEqual(
-			renderWithSourceMap(sink => again.render(0, 21, sink), source => source.name),
+		expect(renderWithSourceMap(sink => rewrite.render(0, 21, sink), (source: TestSource) => source.name)).toEqual(
+			renderWithSourceMap(sink => again.render(0, 21, sink), (source: TestSource) => source.name),
 		);
 	});
 
