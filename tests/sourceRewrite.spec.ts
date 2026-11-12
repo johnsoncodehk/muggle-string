@@ -458,20 +458,73 @@ describe('runs', () => {
 		expect(collect(view(rewrite))).toEqual([{ source: s, start: 0, end: 3, data: 'body' }]);
 	});
 
-	test('a slice that is not placed does not render, with the code in it, which unrendered tells until it renders', () => {
+	test('a slice that is not placed does not render, with the code in it, which unrendered tells whatever has rendered', () => {
 		const rewrite = createRewrite(s, 'abcdef');
 		const body = view(rewrite);
 		const placed = rewrite.cut(0, 1, { data: 'placed' });
 		const unplaced = rewrite.cut(2, 4, { data: 'unplaced' });
 		rewrite.insertBefore(0, 'x');
 		rewrite.insertBefore(3, 'y');
-		rewrite.insertAfter(6, ['z', placed]);
 		expect(rewrite.unrendered()).toEqual([placed, unplaced]);
+		rewrite.insertAfter(6, ['z', placed]);
+		expect(rewrite.unrendered()).toEqual([unplaced]);
 		// the code before the char 0 is of the slice that holds it
 		expect(render(body)).toBe('befzxa');
 		expect(rewrite.unrendered()).toEqual([unplaced]);
+		// its own render places it nowhere
 		expect(render(unplaced)).toBe('cyd');
+		expect(rewrite.unrendered()).toEqual([unplaced]);
+		expect(rewrite.unrendered()[0]).toBe(unplaced);
+	});
+
+	test('unrendered tells the slices placed nowhere, or only in code that such a slice renders', () => {
+		const rewrite = createRewrite(s, 'abcdefgh');
+		const lost = rewrite.cut(0, 2);
+		const inLost = rewrite.cut(2, 4);
+		const inBoth = rewrite.cut(4, 6);
+		const inPlaceholder = rewrite.cut(6, 7);
+		// in the code of a slice that is placed nowhere
+		rewrite.insertBefore(0, [inLost, inBoth]);
+		expect(rewrite.unrendered()).toEqual([lost, inLost, inBoth, inPlaceholder]);
+		// in code that a view renders too
+		rewrite.insertBefore(8, inBoth);
+		expect(rewrite.unrendered()).toEqual([lost, inLost, inPlaceholder]);
+		// in the placeholder of a cut out of all cuts, which a view renders
+		const outer = rewrite.cut(7, 8, { placeholder: inPlaceholder });
+		expect(rewrite.unrendered()).toEqual([lost, inLost, outer]);
+		// in the placeholder of a cut inside a slice that is placed nowhere
+		const deep = rewrite.cut(1, 2, { placeholder: outer });
+		expect(rewrite.unrendered()).toEqual([lost, inLost, outer, deep]);
+		expect(render(view(rewrite))).toBe('gef');
+		rewrite.insertAfter(0, lost);
+		expect(rewrite.unrendered()).toEqual([deep]);
+		expect(render(view(rewrite))).toBe('cdefahgef');
+	});
+
+	test('a later cut around the place of a slice renders the slice only where that cut renders', () => {
+		const rewrite = createRewrite(s, 'abcdef');
+		const moved = rewrite.cut(0, 1);
+		rewrite.insertBefore(4, moved);
 		expect(rewrite.unrendered()).toEqual([]);
+		const around = rewrite.cut(3, 6);
+		expect(rewrite.unrendered()).toEqual([moved, around]);
+		expect(render(view(rewrite))).toBe('bc');
+		rewrite.insertAfter(0, around);
+		expect(rewrite.unrendered()).toEqual([]);
+		expect(render(view(rewrite))).toBe('daefbc');
+	});
+
+	test('a slice placed in another rewrite is rendered where that rewrite renders it', () => {
+		const from = createRewrite(other, 'xyz');
+		const inView = from.cut(0, 1);
+		const inLost = from.cut(1, 2);
+		const to = createRewrite(s, 'abc');
+		const lost = to.cut(1, 2);
+		to.insertBefore(0, inView);
+		to.insertBefore(1, inLost);
+		expect(from.unrendered()).toEqual([inLost]);
+		expect(to.unrendered()).toEqual([lost]);
+		expect(render(view(to))).toBe('xac');
 	});
 
 	test('a cut that is placed in code in a cut placed elsewhere renders there', () => {
@@ -527,27 +580,90 @@ describe('construction errors', () => {
 		expect(pieces.map(rewritePieceText).join('')).toBe('Acb');
 	});
 
-	test('a cut placed in code that only its own render renders is an error at the first render', () => {
+	test('an edit that places a cut in code that only its own render renders is an error, and makes no edit', () => {
 		const inOwnRange = createRewrite(s, 'abcdef');
-		const body = view(inOwnRange);
 		const cut = inOwnRange.cut(1, 4, { data: 'cut' });
-		inOwnRange.insertBefore(2, cut);
-		const message = 'The cut 1..4 is placed inside itself, so it never renders.';
-		expect(() => collect(body)).toThrow(message);
-		expect(() => collect(cut)).toThrow(message);
+		expect(() => inOwnRange.insertBefore(2, cut)).toThrow(
+			new Error('insertBefore(2, code): the cut 1..4 would be placed inside itself, so it would never render.'),
+		);
+		expect(() => inOwnRange.writer(0).replace(3, 4, ['x', [cut]])).toThrow(
+			new Error('replace(3, 4, code): the cut 1..4 would be placed inside itself, so it would never render.'),
+		);
+		expect(() => inOwnRange.replace(2, 2, cut)).toThrow('replace(2, 2, code): the cut 1..4 would be placed inside itself');
+		expect(render(view(inOwnRange))).toBe('aef');
+		expect(render(cut)).toBe('bcd');
 
 		const inOwnPlaceholder = createRewrite(s, 'abcdef');
 		const outer = inOwnPlaceholder.cut(1, 5, { data: 'outer' });
-		inOwnPlaceholder.cut(2, 3, { data: 'inner', placeholder: [outer] });
-		expect(() => collect(outer)).toThrow('The cut 1..5 is placed inside itself');
+		expect(() => inOwnPlaceholder.cut(2, 3, { data: 'inner', placeholder: ['<', outer, '>'] })).toThrow(
+			new Error(
+				'cut(2, 3, options): the cut 1..5 would be placed inside itself by the placeholder, so it would never render.',
+			),
+		);
+		// the cut that threw is not made
+		expect(inOwnPlaceholder.unrendered()).toEqual([outer]);
+		expect(render(outer)).toBe('bcde');
 
 		const inEachOther = createRewrite(s, 'abcdef');
-		const whole = inEachOther.cut(0, 6, { data: 'whole' });
+		inEachOther.cut(0, 6, { data: 'whole' });
 		const first = inEachOther.cut(1, 2, { data: 'first' });
 		const second = inEachOther.cut(3, 4, { data: 'second' });
 		inEachOther.insertBefore(1, second);
-		inEachOther.insertBefore(3, first);
-		expect(() => collect(whole)).toThrow('is placed inside itself');
+		expect(() => inEachOther.insertBefore(3, first)).toThrow(
+			'insertBefore(3, code): the cut 1..2 would be placed inside itself, so it would never render.',
+		);
+		expect(render(first)).toBe('db');
+
+		const throughThree = createRewrite(s, 'abcdef');
+		const cuts = [throughThree.cut(0, 2), throughThree.cut(2, 4), throughThree.cut(4, 6)];
+		throughThree.insertBefore(0, cuts[1]!);
+		throughThree.insertBefore(2, cuts[2]!);
+		expect(() => throughThree.insertAfter(6, cuts[0]!)).toThrow(
+			'insertAfter(6, code): the cut 0..2 would be placed inside itself, so it would never render.',
+		);
+		// a place that a view renders does not undo one that only the cut renders
+		throughThree.insertAfter(0, cuts[0]!);
+		expect(() => throughThree.insertBefore(5, cuts[0]!)).toThrow('the cut 0..2 would be placed inside itself');
+		expect(render(view(throughThree))).toBe('efcdab');
+	});
+
+	test('a cut placed before its own first char or after its last is an error that tells the insert to use', () => {
+		const rewrite = createRewrite(s, 'abcdef');
+		const cut = rewrite.cut(0, 3);
+		expect(() => rewrite.insertBefore(0, cut)).toThrow(
+			new Error(
+				'insertBefore(0, code): the cut 0..3 would be placed inside itself, so it would never render. '
+					+ 'Code before the char at 0 is part of the cut that starts there: insertAfter(0, code) places code before that cut.',
+			),
+		);
+		expect(() => rewrite.insertAfter(3, cut)).toThrow(
+			new Error(
+				'insertAfter(3, code): the cut 0..3 would be placed inside itself, so it would never render. '
+					+ 'Code after the char that ends at 3 is part of the cut that ends there: insertBefore(3, code) places code after that cut.',
+			),
+		);
+		// inside the cut, or by a cut inside it, no other insert places it
+		expect(() => rewrite.insertBefore(1, cut)).toThrow(
+			new Error('insertBefore(1, code): the cut 0..3 would be placed inside itself, so it would never render.'),
+		);
+		rewrite.insertAfter(0, ['<', cut, '>']);
+		rewrite.insertBefore(3, ['[', cut, ']']);
+		expect(render(view(rewrite))).toBe('<abc>[abc]def');
+	});
+
+	test('a later cut around the place of a slice cannot be placed in that slice', () => {
+		const rewrite = createRewrite(s, 'abcdefgh');
+		const moved = rewrite.cut(0, 2);
+		rewrite.insertBefore(5, moved);
+		const around = rewrite.cut(4, 8);
+		expect(() => rewrite.insertBefore(1, around)).toThrow(
+			'insertBefore(1, code): the cut 4..8 would be placed inside itself, so it would never render.',
+		);
+		expect(() => rewrite.cut(1, 2, { placeholder: around })).toThrow(
+			'cut(1, 2, options): the cut 4..8 would be placed inside itself by the placeholder, so it would never render.',
+		);
+		rewrite.insertBefore(2, around);
+		expect(render(view(rewrite))).toBe('eabfghcd');
 	});
 
 	test('a cut that its own render places is an error, also across rewrites', () => {
@@ -556,8 +672,47 @@ describe('construction errors', () => {
 		const aCut = a.cut(0, 3, { data: 'a' });
 		const bCut = b.cut(0, 3, { data: 'b' });
 		a.insertBefore(1, bCut);
-		b.insertBefore(1, aCut);
-		expect(() => collect(aCut)).toThrow('The cut 0..3 is placed inside itself, so it never renders.');
+		expect(() => b.insertBefore(1, aCut)).toThrow(
+			'insertBefore(1, code): the cut 0..3 would be placed inside itself, so it would never render.',
+		);
+		expect(render(aCut)).toBe('axyzbc');
+	});
+
+	test('the copies of the package know where each places the slices of the other', () => {
+		const cjs: typeof import('../src') = createRequire(__filename)('../out/cjs/index.js');
+		expect(cjs.createSourceRewrite).not.toBe(createSourceRewrite);
+		const a = createRewrite(s, 'abc');
+		const b = cjs.createSourceRewrite<TestSource, TestData>({ name: other, content: 'xyz' });
+		const aCut = a.cut(0, 3);
+		const bCut = b.cut(0, 3);
+		const moved = a.cut(1, 2);
+		expect(a.unrendered()).toEqual([aCut, moved]);
+		// a slice that a view of the other copy renders is rendered
+		b.insertBefore(3, moved);
+		expect(a.unrendered()).toEqual([aCut]);
+		expect(render(view(b))).toBe('b');
+		// and a slice that only a slice of the other copy renders is not, as that slice is not
+		a.insertBefore(0, bCut);
+		expect(b.unrendered()).toEqual([bCut]);
+		expect(() => b.insertBefore(1, aCut)).toThrow(
+			new Error('insertBefore(1, code): the cut 0..3 would be placed inside itself, so it would never render.'),
+		);
+		expect(() => b.cut(1, 2, { placeholder: ['<', aCut, '>'] })).toThrow(
+			'cut(1, 2, options): the cut 0..3 would be placed inside itself by the placeholder, so it would never render.',
+		);
+		a.insertAfter(0, aCut);
+		expect(a.unrendered()).toEqual([]);
+		expect(b.unrendered()).toEqual([]);
+		expect(render(view(a))).toBe('xyzac');
+	});
+
+	test('a slice of version 1 of the package, which records no places, is no slice and no code', () => {
+		const rewrite = createRewrite(s, 'abc');
+		const old = { [Symbol.for('muggle-string.slice')]: true, start: 0, end: 1, render: () => {} };
+		// @ts-expect-error only cut makes a slice
+		expect(() => rewrite.insertBefore(0, old)).toThrow(
+			new TypeError('insertBefore(0, code): code, the range 0..1, has no source.'),
+		);
 	});
 
 	test('a slice and a view render as often as they are rendered or placed', () => {
@@ -745,7 +900,7 @@ describe('data', () => {
 		const outer = rewrite.cut(0, 6, { data: 'outer' });
 		const plain = rewrite.cut(1, 3);
 		const withData = rewrite.cut(4, 5, { data: 'inner' });
-		rewrite.cut(3, 4, { data: 'held', placeholder: ['<', plain, withData, '>'] });
+		const held = rewrite.cut(3, 4, { data: 'held', placeholder: ['<', plain, withData, '>'] });
 		expect(collect(outer)).toStrictEqual([
 			{ source: s, start: 0, end: 1, data: 'outer' },
 			'<',
@@ -754,6 +909,9 @@ describe('data', () => {
 			'>',
 			{ source: s, start: 5, end: 6, data: 'outer' },
 		]);
+		expect(rewrite.unrendered()).toEqual([outer, plain, withData, held]);
+		rewrite.insertAfter(0, outer);
+		expect(rewrite.unrendered()).toEqual([held]);
 	});
 
 	test('a slice of another rewrite or another copy of the package renders with the data of its own cut', () => {
@@ -1348,6 +1506,9 @@ test('the tests type check, so the errors they expect are errors', () => {
 	expect(stdout + stderr).toBe('');
 });
 
+const exported =
+	'createSourceRewrite,decodeMappings,encodeMappings,renderWithDecodedSourceMap,renderWithSourceMap,rewritePieceText';
+
 test('the built package is ES modules that Node imports by the package name, with no side effects', () => {
 	const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '../package.json'), 'utf8'));
 	expect(pkg.type).toBe('module');
@@ -1358,7 +1519,17 @@ test('the built package is ES modules that Node imports by the package name, wit
 		{ cwd: path.join(__dirname, '..'), encoding: 'utf8' },
 	);
 	expect(stderr).toBe('');
-	expect(stdout.trim()).toBe('createSourceRewrite,decodeMappings,encodeMappings,renderWithDecodedSourceMap,renderWithSourceMap,rewritePieceText');
+	expect(stdout.trim()).toBe(exported);
+});
+
+test('the built package is also CommonJS that Node requires by the package name, with the same exports', () => {
+	const { stdout, stderr } = spawnSync(
+		process.execPath,
+		['--input-type=commonjs', '-e', `console.log(Object.keys(require('muggle-string')).sort().join())`],
+		{ cwd: path.join(__dirname, '..'), encoding: 'utf8' },
+	);
+	expect(stderr).toBe('');
+	expect(stdout.trim()).toBe(exported);
 });
 
 test('the declarations of the built package declare decodeMappings and encodeMappings', () => {

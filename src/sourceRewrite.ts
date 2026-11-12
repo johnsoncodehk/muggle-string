@@ -1,8 +1,28 @@
 import { describe, isRange, notPiece, rangeProblem, type UncheckedRange } from './piece.js';
 import type { Piece, Source } from './types.js';
 
-// `Symbol.for`, as a cut of another copy of the package, such as its CommonJS build, is a slice too
+// `Symbol.for`, as a cut of another copy of the package, such as its CommonJS build, is a slice too: every copy finds
+// under it where the slice is placed, and records there where it places it
 const sliceBrand = Symbol.for('muggle-string.slice');
+
+/** Where a slice is placed, which every copy of the package that places it records under the brand of the slice. */
+interface SlicePlaces {
+	/** The range of its cut, which the error of an edit that places it wrongly names. */
+	readonly start: number;
+	readonly end: number;
+	/** Whether it is placed in the code before or after all text, which a view renders. */
+	inView: boolean;
+	/**
+	 * For each other place, in the code of an edit or in a placeholder, what gives the slice that renders the code there
+	 * now, or nothing when a view does: a later cut around the place changes it.
+	 */
+	renderers: (() => PlacedSlice | undefined)[] | undefined;
+}
+
+/** A slice of any rewrite of any copy of the package, as the edits that place it see it. */
+interface PlacedSlice {
+	readonly [sliceBrand]: SlicePlaces;
+}
 
 /**
  * What a range of a rewrite carries beyond its offsets: its `source`; `name`, the original name of the symbol that a
@@ -52,8 +72,7 @@ export interface RewriteWriter<S extends Source, Data = undefined> {
 }
 
 /** What `cut` returns; no other object is a slice. */
-export interface RewriteSlice<S extends Source, Data = undefined> {
-	readonly [sliceBrand]: true;
+export interface RewriteSlice<S extends Source, Data = undefined> extends PlacedSlice {
 	/** Passes the pieces of the slice to `sink`, in order: no string is empty, and kept text is a range without `text`. */
 	render(sink: (piece: Piece<RewriteOrigin<S, Data>>) => void): void;
 }
@@ -78,8 +97,8 @@ export interface SourceRewrite<S extends Source, Data = undefined> extends Rewri
 	 * inside, and a cut that crosses another throws. Text that is not wanted is removed by `replace`; a slice is cut to
 	 * be placed, and `unrendered` tells one that is not.
 	 *
-	 * A slice renders wherever and as often as it is placed and rendered. A slice that is placed in code that only its
-	 * own render renders, as in its own range, throws when it renders.
+	 * A slice renders wherever and as often as it is placed and rendered. An edit that places a slice in code that only
+	 * its own render renders, as in its own range, throws.
 	 */
 	cut(
 		start: number,
@@ -99,8 +118,9 @@ export interface SourceRewrite<S extends Source, Data = undefined> extends Rewri
 		...data: undefined extends Data ? [data?: Data] : [data: Data]
 	): void;
 	/**
-	 * The slices that have not rendered, in cut order: after the last render of its consumer, those that it placed
-	 * nowhere, or in code that it did not render.
+	 * The slices that no view renders, in cut order: those placed in no code, or only in code that moves with such a
+	 * slice. It tells what the edits place, whatever has rendered: a slice that only its own `render` renders is one of
+	 * them.
 	 */
 	unrendered(): RewriteSlice<S, Data>[];
 }
@@ -118,7 +138,7 @@ export function createSourceRewrite<S extends Source, Data = undefined>(source: 
 		cut: (start: number, end: number, options?: RewriteCutOptions<S, Data>) => rewrite.cut(start, end, options),
 		render: (start: number, end: number, sink: Sink<S, Data>, data?: Data) =>
 			rewrite.render(start, end, data, sink),
-		unrendered: () => rewrite.cuts.filter(cut => cut.state === CutState.Unrendered),
+		unrendered: () => rewrite.unrendered(),
 	};
 }
 
@@ -143,6 +163,11 @@ export function rewritePieceText(piece: Piece<{ source: Source }>): string {
 	}
 	const { text } = piece;
 	return text === undefined ? piece.source.content.slice(piece.start, piece.end) : text;
+}
+
+// a slice of version 1 has true there, and no record of its places: it is no slice here
+function isPlaces(places: unknown): places is SlicePlaces {
+	return typeof places === 'object' && places !== null;
 }
 
 const coreRank = 0x7fffffff;
@@ -229,8 +254,6 @@ class Rewrite<S extends Source, Data> {
 	frozen = false;
 	/** How many renders of the rewrite or its slices are running. */
 	rendering = 0;
-	/** What compiling the edits threw, which every render throws until the next edit. */
-	error: unknown;
 	/** The content of the source when the rewrite was made. */
 	readonly content: string;
 	/** When frozen, the keys and code of the edits of all writers, in render order. */
@@ -253,22 +276,22 @@ class Rewrite<S extends Source, Data> {
 		const writer: RewriteWriter<S, Data> = {
 			insertBefore: (offset, code) => {
 				this.check(offset, offset);
-				code = this.accept(code, 'insertBefore', offset, offset);
+				code = this.accept(code, offset, 'insertBefore', offset, offset);
 				edits.add(offset, offset === this.content.length ? Side.After : Side.Before, code);
 			},
 			insertAfter: (offset, code) => {
 				this.check(offset, offset);
-				code = this.accept(code, 'insertAfter', offset, offset);
+				code = this.accept(code, offset - 1, 'insertAfter', offset, offset);
 				edits.add(offset ? offset - 1 : -1, offset ? Side.After : Side.Before, code);
 			},
 			replace: (start, end, code) => {
 				this.check(start, end);
 				if (start < end) {
-					edits.add(start, Side.Slot, this.accept(code, 'replace', start, end));
+					edits.add(start, Side.Slot, this.accept(code, start, 'replace', start, end));
 					this.addRemoval(start, end);
 				}
 				else if (code !== '') {
-					edits.add(start, Side.Slot, this.accept(code, 'replace', start, end));
+					edits.add(start, Side.Slot, this.accept(code, start, 'replace', start, end));
 				}
 			},
 		};
@@ -285,9 +308,86 @@ class Rewrite<S extends Source, Data> {
 		}
 	}
 
-	/** `code` as the rewrite holds it, once it is known to be code that renders, for the edit that `method` makes at `start`..`end`. */
-	private accept(code: RewriteCode<S, Data>, method: EditMethod, start: number, end: number) {
-		return typeof code === 'string' ? code : readCode<S, Data>(code, method, start, end);
+	/**
+	 * `code` as the rewrite holds it, once it is known to be code that renders. The slices in it are placed at the char
+	 * `at`, in the code of the edit that `method` makes at `start`..`end`.
+	 */
+	private accept(code: RewriteCode<S, Data>, at: number, method: EditMethod, start: number, end: number) {
+		if (typeof code === 'string') {
+			return code;
+		}
+		// most code that places a slice is the slice, which needs no check; code is any value until it is read
+		if (typeof code === 'object' && code !== null && isSlice<S, Data>(code)) {
+			this.place(code, at, method, start, end);
+			return code;
+		}
+		const array = isCodeArray<S, Data>(code);
+		code = readCode<S, Data>(code, method, start, end);
+		// a range holds no slice
+		const slices = array && slicesOf(code);
+		if (slices) {
+			this.place(slices, at, method, start, end);
+		}
+		return code;
+	}
+
+	/** Places `slices` in the code of the edit that `method` makes at `start`..`end`, at the char `at`. */
+	private place(slices: PlacedSlice | PlacedSlice[], at: number, method: EditMethod, start: number, end: number) {
+		// the code before and after all text is at no char: no cut holds it, now or later
+		if (at < 0 || at >= this.content.length) {
+			if (isSlices(slices)) {
+				for (const slice of slices) {
+					slice[sliceBrand].inView = true;
+				}
+			}
+			else {
+				slices[sliceBrand].inView = true;
+			}
+			return;
+		}
+		const owner = this.ownerAt(at);
+		const inside = owner && firstRendering(slices, owner);
+		if (inside) {
+			throw new Error(
+				`${nameEdit(method, start, end)}: ${nameCut(inside)} would be placed inside itself, so it would never render.${
+					inside !== owner
+						? ''
+						: method === 'insertBefore' && start === owner.start
+						? ` Code before the char at ${start} is part of the cut that starts there: insertAfter(${start}, code) places code before that cut.`
+						: method === 'insertAfter' && start === owner.end
+						? ` Code after the char that ends at ${start} is part of the cut that ends there: insertBefore(${start}, code) places code after that cut.`
+						: ''
+				}`,
+			);
+		}
+		// a later cut around the char renders the code there
+		addRenderer(slices, () => this.ownerAt(at));
+	}
+
+	/** The innermost cut that holds the char `at`, which renders the code of the edits at it; none out of all cuts. */
+	ownerAt(at: number) {
+		let owner: Cut<S, Data> | undefined;
+		let children: Cut<S, Data>[] | undefined = this.roots;
+		while (children) {
+			let low = 0;
+			let high = children.length;
+			while (low < high) {
+				const mid = (low + high) >>> 1;
+				if (children[mid]!.end <= at) {
+					low = mid + 1;
+				}
+				else {
+					high = mid;
+				}
+			}
+			const child: Cut<S, Data> | undefined = children[low];
+			if (!child || child.start > at) {
+				break;
+			}
+			owner = child;
+			children = child.children;
+		}
+		return owner;
 	}
 
 	/**
@@ -305,6 +405,8 @@ class Rewrite<S extends Source, Data> {
 		}
 		let data: Data | undefined;
 		let placeholder: RewriteCode<S, Data> | undefined;
+		/** The slices in the placeholder. */
+		let slices: PlacedSlice | PlacedSlice[] | undefined;
 		if (options !== undefined) {
 			if (typeof options !== 'object' || options === null || Array.isArray(options)) {
 				throw new TypeError(`${nameCutCall(start, end)}: the options are ${describe(options)}, not an object.`);
@@ -319,6 +421,7 @@ class Rewrite<S extends Source, Data> {
 			({ data, placeholder } = options);
 			if (placeholder !== undefined && typeof placeholder !== 'string') {
 				placeholder = readCode<S, Data>(placeholder, 'cut', start, end);
+				slices = slicesOf(placeholder);
 			}
 		}
 		// the innermost cut that holds the range is inside any cut that holds it, so the search starts from the closest
@@ -354,8 +457,15 @@ class Rewrite<S extends Source, Data> {
 			for (; last < siblings.length && siblings[last]!.start < end; last++) {
 				const inner = siblings[last]!;
 				if (inner.start < start || inner.end > end) {
-					throw new RangeError(`The cut ${start}..${end} crosses ${nameCut(inner).toLowerCase()}.`);
+					throw new RangeError(`The cut ${start}..${end} crosses ${nameCut(inner)}.`);
 				}
+			}
+			// the cut that contains the cut renders its placeholder
+			const inside = slices && parent && firstRendering(slices, parent);
+			if (inside) {
+				throw new Error(
+					`${nameCutCall(start, end)}: ${nameCut(inside)} would be placed inside itself by the placeholder, so it would never render.`,
+				);
 			}
 			const cut = new Cut<S, Data>(this, parent, start, end, data, placeholder);
 			if (last === siblings.length && low === last) {
@@ -369,6 +479,10 @@ class Rewrite<S extends Source, Data> {
 						inner.parent = cut;
 					}
 				}
+			}
+			if (slices) {
+				// a later cut around the cut renders its placeholder
+				addRenderer(slices, () => cut.parent);
 			}
 			this.cuts.push(cut);
 			return cut;
@@ -522,14 +636,7 @@ class Rewrite<S extends Source, Data> {
 		if (this.rendering) {
 			throw new Error('The rewrite is rendering.');
 		}
-		if (this.frozen) {
-			this.frozen = false;
-			this.error = undefined;
-			for (const cut of this.cuts) {
-				cut.renderers = undefined;
-				cut.visit = Visit.Unvisited;
-			}
-		}
+		this.frozen = false;
 	}
 
 	freeze() {
@@ -537,9 +644,6 @@ class Rewrite<S extends Source, Data> {
 			throw new Error('The content of the source changed after the rewrite was made.');
 		}
 		if (this.frozen) {
-			if (this.error) {
-				throw this.error;
-			}
 			return;
 		}
 		this.frozen = true;
@@ -548,22 +652,15 @@ class Rewrite<S extends Source, Data> {
 			edits.sort();
 		}
 		this.mergeRemovals();
-		try {
-			this.compile(writers);
-		}
-		catch (error) {
-			this.error = error;
-			throw error;
-		}
+		this.compile(writers);
 	}
 
 	/**
 	 * Merges the edits of all writers in render order, and finds where the edits and the removals of each cut start and
-	 * end, and the cut that owns each edit, in one walk of the cuts in the order of their starts and ends. Then checks
-	 * the placements of the cuts.
+	 * end, in one walk of the cuts in the order of their starts and ends.
 	 */
 	private compile(writers: Edits<S, Data>[]) {
-		const [keys, code, positions] = mergeEdits(writers);
+		const [keys, code] = mergeEdits(writers);
 		this.keys = keys;
 		this.code = code;
 		if (!this.cuts.length) {
@@ -571,8 +668,6 @@ class Rewrite<S extends Source, Data> {
 		}
 		const count = code.length;
 		const { removals, removalsSize } = this;
-		/** The cut that owns each edit, by its index in `code`. */
-		const owners: (Cut<S, Data> | undefined)[] = [];
 		let edit = 0;
 		let removal = 0;
 		/** The cuts entered and not left but the innermost, `owner`, each with the index of its next child. */
@@ -585,9 +680,7 @@ class Rewrite<S extends Source, Data> {
 			const child: Cut<S, Data> | undefined = children?.[index];
 			// enters the next child, or leaves the cut
 			const at = child ? child.start : owner ? owner.end : Infinity;
-			for (; edit < count && keys[edit]! < at * 4; edit++) {
-				owners.push(owner);
-			}
+			for (; edit < count && keys[edit]! < at * 4; edit++);
 			for (; removal < removalsSize && removals[removal + 1]! <= at; removal += 2);
 			if (child) {
 				child.firstEdit = edit;
@@ -608,24 +701,34 @@ class Rewrite<S extends Source, Data> {
 			index = nextChild.pop()!;
 			children = owner ? owner.children : this.roots;
 		}
-		/** The cuts that have renderers. */
-		const placed: Cut<S, Data>[] = [];
-		// by writer and in the order of each, which decides the cut that the error of a cycle names
-		for (let writer = 0; writer < writers.length; writer++) {
-			const edits = writers[writer]!;
-			for (let index = 0; index < edits.code.length; index++) {
-				const owner = owners[positions ? positions[writer]![index]! : index];
-				if (owner) {
-					place(this, placed, edits.code[index]!, owner);
+	}
+
+	/**
+	 * The cuts that no view renders: a view renders a cut that is placed in code out of all cuts, in the placeholder of
+	 * an outermost cut, or in code or a placeholder that a cut that a view renders does. No cut renders itself, as the
+	 * edits refuse it, so the search ends.
+	 */
+	unrendered() {
+		const known = new Map<PlacedSlice, boolean>();
+		const rendered = (slice: PlacedSlice): boolean => {
+			let is = known.get(slice);
+			if (is === undefined) {
+				const { inView, renderers } = slice[sliceBrand];
+				is = inView;
+				if (!is && renderers) {
+					for (const renderer of renderers) {
+						const by = renderer();
+						if (!by || rendered(by)) {
+							is = true;
+							break;
+						}
+					}
 				}
+				known.set(slice, is);
 			}
-		}
-		for (const cut of this.cuts) {
-			if (cut.placeholder !== undefined && cut.parent) {
-				place(this, placed, cut.placeholder, cut.parent);
-			}
-		}
-		checkRenderers(placed);
+			return is;
+		};
+		return this.cuts.filter(cut => !rendered(cut));
 	}
 
 	private mergeRemovals() {
@@ -710,12 +813,11 @@ function sortOrder(values: Int32Array, size: number, stride: number, bias: numbe
 
 /**
  * The keys and code of all writers, in render order: at one side of one char, the code before the text goes outermost
- * (highest rank) first, and the code in the place of the char and after the text innermost first. With more than one
- * writer, also the merged index of each edit of each writer.
+ * (highest rank) first, and the code in the place of the char and after the text innermost first.
  */
 function mergeEdits<S extends Source, Data>(
 	writers: Edits<S, Data>[],
-): [Int32Array, RewriteCode<S, Data>[], Int32Array[]?] {
+): [Int32Array, RewriteCode<S, Data>[]] {
 	if (writers.length < 2) {
 		return writers.length ? [writers[0]!.keys, writers[0]!.code] : [new Int32Array(0), []];
 	}
@@ -725,7 +827,6 @@ function mergeEdits<S extends Source, Data>(
 	}
 	const keys = new Int32Array(total);
 	const merged: RewriteCode<S, Data>[] = [];
-	const positions = writers.map(edits => new Int32Array(edits.code.length));
 	const next = writers.map(() => 0);
 	while (true) {
 		let best = -1;
@@ -754,14 +855,12 @@ function mergeEdits<S extends Source, Data>(
 			}
 		}
 		if (best === -1) {
-			return [keys, merged, positions];
+			return [keys, merged];
 		}
 		const edits = writers[best]!;
-		const position = positions[best]!;
 		let edit = next[best]!;
 		// an edit at `bound` itself may lose to the other writer there: it is chosen again
 		do {
-			position[edit] = merged.length;
 			keys[merged.length] = edits.keys[edit]!;
 			merged.push(edits.code[edit++]!);
 		}
@@ -774,6 +873,15 @@ type EditMethod = 'insertBefore' | 'insertAfter' | 'replace';
 
 function nameEdit(method: EditMethod, start: number, end: number) {
 	return method === 'replace' ? `replace(${start}, ${end}, code)` : `${method}(${start}, code)`;
+}
+
+function nameCutCall(start: number, end: number) {
+	return `cut(${start}, ${end}, options)`;
+}
+
+function nameCut(slice: PlacedSlice) {
+	const { start, end } = slice[sliceBrand];
+	return `the cut ${start}..${end}`;
 }
 
 /** What is wrong with code: the class of its error, where in the code, and the rest of the sentence. */
@@ -854,7 +962,7 @@ function valueProblem(value: unknown): CodeProblem | undefined {
 			problem: ` is ${describe(value)}, which is not code: a string, a range, a slice or an array of them`,
 		};
 	}
-	if ((value as Partial<RewriteSlice<Source, unknown>>)[sliceBrand] === true) {
+	if (isPlaces((value as Partial<PlacedSlice>)[sliceBrand])) {
 		return undefined;
 	}
 	const { start, end } = value as UncheckedRange;
@@ -870,100 +978,80 @@ function valueProblem(value: unknown): CodeProblem | undefined {
 }
 
 /**
- * Records the cuts of `rewrite` placed in `code` as rendered by `renderer`, and adds each to `placed` the first time;
- * a view is no renderer. Not a closure in `compile`: a new closure at each freeze makes V8 deoptimize the call.
+ * The slices in `code` as a rewrite holds it: the slice that it is, as most code that places a slice, or those of its
+ * array, if any. No list is made for one slice: a rewrite of many cuts places each by an edit of its own.
  */
-function place<S extends Source, Data>(
-	rewrite: Rewrite<S, Data>,
-	placed: Cut<S, Data>[],
-	code: RewriteCode<S, Data>,
-	renderer: Cut<S, Data>,
-) {
+function slicesOf<S extends Source, Data>(code: RewriteCode<S, Data>): PlacedSlice | PlacedSlice[] | undefined {
 	if (typeof code === 'string') {
-		return;
+		return undefined;
 	}
-	if (isCodeArray<S, Data>(code)) {
-		for (let index = 0; index < code.length; index++) {
-			place(rewrite, placed, code[index]!, renderer);
+	if (!isCodeArray<S, Data>(code)) {
+		return isSlice<S, Data>(code) ? code : undefined;
+	}
+	let slices: PlacedSlice[] | undefined;
+	for (let index = 0; index < code.length; index++) {
+		const value = code[index]!;
+		if (typeof value !== 'string' && isSlice<S, Data>(value)) {
+			(slices ??= []).push(value);
 		}
 	}
-	else if (code instanceof Cut && code.rewrite === rewrite) {
-		if (code.renderers) {
-			code.renderers.push(renderer);
+	return slices;
+}
+
+function isSlices(slices: PlacedSlice | PlacedSlice[]): slices is PlacedSlice[] {
+	return Array.isArray(slices);
+}
+
+/** The first of `slices` whose render renders `owner`, if any. */
+function firstRendering(slices: PlacedSlice | PlacedSlice[], owner: PlacedSlice) {
+	return isSlices(slices) ? slices.find(slice => renders(slice, owner)) : renders(slices, owner) ? slices : undefined;
+}
+
+/** Records a place of `slices`: `renderer` gives the slice that renders the code there, or nothing when a view does. */
+function addRenderer(slices: PlacedSlice | PlacedSlice[], renderer: () => PlacedSlice | undefined) {
+	if (isSlices(slices)) {
+		for (const slice of slices) {
+			(slice[sliceBrand].renderers ??= []).push(renderer);
 		}
-		else {
-			code.renderers = [renderer];
-			placed.push(code);
-		}
+	}
+	else {
+		(slices[sliceBrand].renderers ??= []).push(renderer);
 	}
 }
 
 /**
- * Throws for a cut that only its own render would render: placed in code that it renders, directly or through the
- * cuts placed in it. Code at a char renders in the innermost cut that owns the char, and a placeholder in the cut
- * around its own.
+ * Whether a render of `slice` renders `owner`: it is `owner`, or it renders code that `owner` is placed in, itself or
+ * through the slices placed in it. A slice placed in code that `owner` renders would then render only by its own
+ * render. Code at a char renders in the innermost cut that holds the char, and a placeholder in the cut around its own.
  */
-function checkRenderers<S extends Source, Data>(placed: Cut<S, Data>[]) {
-	/** The walked cuts, each with the index of its next renderer. */
-	const path: Cut<S, Data>[] = [];
-	const next: number[] = [];
-	for (const first of placed) {
-		if (first.visit) {
-			continue;
-		}
-		first.visit = Visit.Walking;
-		path.push(first);
-		next.push(0);
-		while (path.length) {
-			const top = path.length - 1;
-			const renderers = path[top]!.renderers;
-			if (!renderers || next[top] === renderers.length) {
-				path.pop()!.visit = Visit.Done;
-				next.pop();
-				continue;
+function renders(slice: PlacedSlice, owner: PlacedSlice) {
+	if (slice === owner) {
+		return true;
+	}
+	if (!owner[sliceBrand].renderers) {
+		return false;
+	}
+	const seen = new Set([owner]);
+	const walk = [owner];
+	while (walk.length) {
+		for (const renderer of walk.pop()![sliceBrand].renderers ?? []) {
+			const by = renderer();
+			if (by === slice) {
+				return true;
 			}
-			const renderer = renderers[next[top]!++]!;
-			if (renderer.visit === Visit.Walking) {
-				throw new Error(`${nameCut(renderer)} is placed inside itself, so it never renders.`);
-			}
-			if (!renderer.visit) {
-				renderer.visit = Visit.Walking;
-				path.push(renderer);
-				next.push(0);
+			if (by && !seen.has(by)) {
+				seen.add(by);
+				walk.push(by);
 			}
 		}
 	}
-}
-
-// the walk of the renderers of the cuts, which finds a cut that leads back to itself
-const enum Visit {
-	Unvisited,
-	Walking,
-	Done,
-}
-
-const enum CutState {
-	Unrendered,
-	Rendering,
-	Rendered,
-}
-
-function nameCutCall(start: number, end: number) {
-	return `cut(${start}, ${end}, options)`;
-}
-
-function nameCut(cut: { start: number; end: number }) {
-	return `The cut ${cut.start}..${cut.end}`;
+	return false;
 }
 
 class Cut<S extends Source, Data> implements RewriteSlice<S, Data> {
-	readonly [sliceBrand] = true as const;
+	readonly [sliceBrand]: SlicePlaces;
 	/** The cuts directly inside, sorted and disjoint. */
 	children: Cut<S, Data>[] | undefined;
-	/** The cuts whose render renders code that it is placed in. */
-	renderers: Cut<S, Data>[] | undefined;
-	visit = Visit.Unvisited;
-	state = CutState.Unrendered;
 	/** When frozen, the indexes of the edits and removals of the rewrite at its start and at its end. */
 	firstEdit = 0;
 	firstRemoval = 0;
@@ -978,24 +1066,22 @@ class Cut<S extends Source, Data> implements RewriteSlice<S, Data> {
 		readonly end: number,
 		/** The data of its kept pieces. */
 		readonly data: Data | undefined,
+		/** The code that takes its place in the cut that contains it; undefined when it has none. */
 		readonly placeholder: RewriteCode<S, Data> | undefined,
-	) {}
+	) {
+		this[sliceBrand] = { start, end, inView: false, renderers: undefined };
+	}
 
 	render(sink: (piece: Piece<RewriteOrigin<S, Data>>) => void) {
 		const { rewrite } = this;
 		rewrite.freeze();
-		if (this.state === CutState.Rendering) {
-			throw new Error(`${nameCut(this)} is placed inside itself, so it never renders.`);
-		}
-		this.state = CutState.Rendering;
 		rewrite.rendering++;
 		try {
-			const { start, end, firstEdit, firstRemoval, children, data } = this;
-			rewrite.renderSpan(start, end, firstEdit, firstRemoval, children, 0, data, sink, false);
+			const { start, end, firstEdit, firstRemoval, children } = this;
+			rewrite.renderSpan(start, end, firstEdit, firstRemoval, children, 0, this.data, sink, false);
 		}
 		finally {
 			rewrite.rendering--;
-			this.state = CutState.Rendered;
 		}
 	}
 }
@@ -1034,5 +1120,5 @@ function isCodeArray<S extends Source, Data>(code: RewriteCode<S, Data>): code i
 }
 
 function isSlice<S extends Source, Data>(code: RewriteCode<S, Data>): code is RewriteSlice<S, Data> {
-	return (code as RewriteSlice<S, Data>)[sliceBrand] === true;
+	return isPlaces((code as Partial<PlacedSlice>)[sliceBrand]);
 }
