@@ -1,4 +1,4 @@
-import { isRange } from './piece.js';
+import { noSource, notPiece, rangeProblem } from './piece.js';
 import type { Piece, Source } from './types.js';
 
 /** A source map of generated text to its sources, in the v3 format. */
@@ -72,13 +72,12 @@ const enum CharClass {
  * text starts with, as of a symbol that `text` renames; it goes in `names`, for the first segment of the range on a
  * char. Kept text is its own name, so the `name` of a range without `text` goes nowhere.
  *
- * It reads a range as `rewritePieceText` does, so it gives the text that `rewritePieceText` gives and throws where
- * that throws: a `text` of null is no text, and a range without `text` that has no source, an object with a string
- * `content`, or whose `start` and `end` are not integers with 0 <= `start` <= `end` <= the length of the content,
- * throws when it reaches the sink. The `text` of such a range has no range to map to, and is new text.
+ * It takes the pieces that `rewritePieceText` takes, by the same check: a range without a source, an object with a
+ * string `content`, whose `start` and `end` are not integers with 0 <= `start` <= `end` <= the length of the content,
+ * or whose `text` or `name` is neither undefined nor a string, throws when it reaches the sink.
  */
 export function renderWithSourceMap<S extends Source>(
-	render: (sink: (piece: Piece<{ source: S; name?: string }>) => void) => void,
+	render: (sink: (piece: Piece<S, unknown>) => void) => void,
 	sourceName: (source: S) => string,
 ): { text: string; map: SourceMap } {
 	// before the render, which may render slices that render only once
@@ -223,7 +222,7 @@ function fieldOf(segment: readonly number[], index: number, line: number) {
  * empty last line included. The segments follow its rules, and it throws where it throws. It needs no `TextDecoder`.
  */
 export function renderWithDecodedSourceMap<S extends Source>(
-	render: (sink: (piece: Piece<{ source: S; name?: string }>) => void) => void,
+	render: (sink: (piece: Piece<S, unknown>) => void) => void,
 	sourceName: (source: S) => string,
 ): { text: string; map: DecodedSourceMap } {
 	return renderWith(render, sourceName, new ArrayWriter());
@@ -231,7 +230,7 @@ export function renderWithDecodedSourceMap<S extends Source>(
 
 /** The render of both maps, which decides every segment of them and gives each to `writer`. */
 function renderWith<S extends Source, Mappings>(
-	render: (sink: (piece: Piece<{ source: S; name?: string }>) => void) => void,
+	render: (sink: (piece: Piece<S, unknown>) => void) => void,
 	sourceName: (source: S) => string,
 	writer: SegmentWriter<Mappings>,
 ) {
@@ -291,7 +290,7 @@ function renderWith<S extends Source, Mappings>(
 		for (let index = content.indexOf('\n'); index >= 0; index = content.indexOf('\n', index + 1)) {
 			lineStarts.push(index + 1);
 		}
-		const known = { index: sources.size, lineStarts, length: content.length, line: 0 };
+		const known = { index: sources.size, lineStarts, line: 0 };
 		sources.set(source, known);
 		sourceNames.push(sourceName(source));
 		sourcesContent.push(content);
@@ -324,30 +323,23 @@ function renderWith<S extends Source, Mappings>(
 			unmapped(piece);
 			return;
 		}
-		const source = piece.source;
-		const { start, end } = piece;
-		let known = source === lastSource ? lastKnown : sources.get(source);
-		// a source is an object with a string `content`
-		const content = known ? undefined : source?.content;
-		const length = known ? known.length : typeof content === 'string' ? content.length : undefined;
-		// as `rewritePieceText` reads a range: its `text` unless that is undefined or null, joined to the text as it is
-		const generated = piece.text == null ? undefined : '' + piece.text;
-		if (length === undefined || !isRange(start, end, length)) {
-			if (generated === undefined) {
-				throw length === undefined
-					? new TypeError(`The range ${start}..${end} has no source.`)
-					: new RangeError(
-						`The range ${start}..${end} of ${known ? sourceNames[known.index] : sourceName(source)} is out of 0..${length}.`,
-					);
-			}
-			// as `rewritePieceText` gives the text of a range that is not one of its source, which has nowhere to map: new text
-			unmapped(generated);
-			return;
+		if (typeof piece !== 'object' || piece === null) {
+			throw notPiece(piece);
 		}
-		known ??= addSource(source, content!);
+		const problem = rangeProblem(piece);
+		// a range has a source unless the check says that it has none
+		const source = piece.source as S;
+		if (problem) {
+			const of = problem === noSource ? '' : ` of ${sourceName(source)}`;
+			throw new problem[0](`The range ${piece.start}..${piece.end}${of} ${problem[1]}.`);
+		}
+		let known = source === lastSource ? lastKnown : sources.get(source);
+		known ??= addSource(source, source.content);
 		lastSource = source;
 		lastKnown = known;
 		const { index, lineStarts } = known;
+		const { start } = piece;
+		const generated = piece.text;
 		pieceName = generated === undefined ? undefined : piece.name;
 		// pieces mostly go on from the end of the last range of their source, on its line or the next
 		let line = known.line;
@@ -431,7 +423,6 @@ function renderWith<S extends Source, Mappings>(
 interface KnownSource {
 	index: number;
 	lineStarts: number[];
-	length: number;
 	line: number;
 }
 

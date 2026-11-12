@@ -18,7 +18,7 @@ interface TestSource {
 	content: string;
 }
 
-type TestPiece = Piece<{ source: TestSource; name?: string }>;
+type TestPiece = Piece<TestSource>;
 type Position = { source: string; offset: number; name: string | null };
 
 function render(pieces: TestPiece[]) {
@@ -250,13 +250,14 @@ describe('renderWithSourceMap', () => {
 		expect(map.names).toEqual(['const', 'a']);
 	});
 
-	test('kept text gives no name, as it is its own name, even with the name field of a view', () => {
-		const rewrite = createSourceRewrite<TestSource, { name: string }>(main);
-		rewrite.replace(6, 7, { source: main, start: 6, end: 7, text: 'b', name: 'a' });
-		const { map } = renderWithSourceMap(
-			sink => rewrite.render(0, main.content.length, sink, { name: 'view' }),
+	test('kept text gives no name, as it is its own name, and the data of a range is not read, whatever its fields', () => {
+		const rewrite = createSourceRewrite<TestSource, { name: string; text: string }>(main);
+		rewrite.replace(6, 7, { source: main, start: 6, end: 7, text: 'b', name: 'a', data: { name: 'range', text: 'range' } });
+		const { text, map } = renderWithSourceMap(
+			sink => rewrite.render(0, main.content.length, sink, { name: 'view', text: 'view' }),
 			(from: TestSource) => from.name,
 		);
+		expect(text).toBe(main.content.slice(0, 6) + 'b' + main.content.slice(7));
 		expect(map.names).toEqual(['a']);
 		const { map: kept } = check([{ source: main, start: 0, end: 13, name: 'kept' }]);
 		expect(kept.names).toEqual([]);
@@ -348,63 +349,90 @@ describe('renderWithSourceMap', () => {
 		}
 	});
 
-	test('a range without text that is not an integer range of the content of its source, or that has no source, is an error', () => {
+	test('a range that is not an integer range of the content of its source, or that has no source, is an error', () => {
 		for (const [start, end] of [[-1, 2], [1.5, 2], [3, 2], [0, 22], [Number.NaN, 2], [0, Infinity]]) {
 			expect(() => render([{ source: main, start: start!, end: end! }])).toThrow(
 				`The range ${start}..${end} of main.js is out of 0..21.`,
 			);
-			expect(() => render([{ source: main, start: 0, end: 5 }, { source: main, start: start!, end: end! }])).toThrow(
+			expect(() => render(['new', { source: main, start: start!, end: end!, text: 'x' }])).toThrow(
 				`The range ${start}..${end} of main.js is out of 0..21.`,
 			);
 		}
 		expect(() => render([{ start: 0, end: 1 } as TestPiece])).toThrow('The range 0..1 has no source.');
+		expect(() => render([{ source: null, start: 0, end: 1, text: 'x' } as unknown as TestPiece])).toThrow(
+			'The range 0..1 has no source.',
+		);
 		expect(() => render([{ source: { name: 'empty' }, start: 0, end: 0 } as TestPiece])).toThrow(
 			'The range 0..0 has no source.',
 		);
 		expect(render([{ source: main, start: 21, end: 21 }, { source: main, start: 0, end: 21, text: '' }]).text).toBe('');
 	});
 
-	test('the text of a range that is no range of its source, or that has no source, is new text, as rewritePieceText gives it unchecked', () => {
-		const after: TestPiece = { source: other, start: 0, end: 3 };
-		for (const [start, end] of [[-1, 2], [1.5, 2], [3, 2], [0, 22], [Number.NaN, 2], [0, Infinity]]) {
-			const range: TestPiece = { source: main, start: start!, end: end!, text: 'x\ny', name: 'n' };
-			expect(rewritePieceText(range)).toBe('x\ny');
-			// no mapping, no name, and no source of it
-			expect(render(['new', range, after])).toEqual(render(['new', 'x\ny', after]));
-			expect(render([{ source: main, start: 0, end: 5 }, range, after])).toEqual(
-				render([{ source: main, start: 0, end: 5 }, 'x\ny', after]),
-			);
-		}
-		const noSource = { source: null, start: 0, end: 1, text: 'x' } as unknown as TestPiece;
-		expect(rewritePieceText(noSource)).toBe('x');
-		expect(render([noSource])).toEqual(render(['x']));
-		expect(render([{ source: { name: 'empty' }, start: 0, end: 0, text: 'x' } as TestPiece])).toEqual(render(['x']));
-		expect(render([{ source: main, start: 0, end: 22, text: '' }])).toEqual(render(['']));
-	});
-
-	test('a range with the text null is a range without text, as rewritePieceText reads it', () => {
-		const range = { source: main, start: 0, end: 12, text: null, name: 'n' } as unknown as TestPiece;
-		expect(rewritePieceText(range)).toBe('const a = 1;');
-		expect(render(['new', range])).toEqual(render(['new', { source: main, start: 0, end: 12 }]));
-		const out = { source: main, start: 0, end: 22, text: null } as unknown as TestPiece;
-		expect(() => rewritePieceText(out)).toThrow('The range 0..22 is out of 0..21.');
-		expect(() => render([out])).toThrow('The range 0..22 of main.js is out of 0..21.');
-	});
-
-	test('a text of a range that is no string is joined to the text, as the value that rewritePieceText gives for it is', () => {
-		for (const value of [0, 5, false, true, Number.NaN, ['a', 'b']]) {
-			const fields = { source: main, start: 6, end: 7, text: value, name: 'a' };
-			const range = fields as unknown as TestPiece;
-			expect(rewritePieceText(range)).toBe(value);
-			expect(render(['new', range])).toEqual(render(['new', { source: main, start: 6, end: 7, text: `${value}`, name: 'a' }]));
-			expect(render([{ ...fields, end: 22 } as unknown as TestPiece])).toEqual(render([`${value}`]));
-		}
-		expect(render([{ source: main, start: 6, end: 7, text: [] } as unknown as TestPiece])).toEqual(
-			render([{ source: main, start: 6, end: 7, text: '' }]),
+	test('a range that the map refuses is refused by the edit of a rewrite that writes it', () => {
+		const rewrite = createSourceRewrite(main);
+		expect(() => rewrite.replace(0, 5, { source: main, start: 0, end: 50, text: 'let' })).toThrow(
+			new RangeError('replace(0, 5, code): code, the range 0..50, is out of 0..21.'),
 		);
-		const symbol = { source: main, start: 6, end: 7, text: Symbol('a') } as unknown as TestPiece;
-		expect(() => `${rewritePieceText(symbol)}`).toThrow(TypeError);
-		expect(() => render([symbol])).toThrow(TypeError);
+		expect(render([{ source: main, start: 0, end: 21 }])).toEqual(
+			renderWithSourceMap(sink => rewrite.render(0, 21, sink), (source: TestSource) => source.name),
+		);
+	});
+
+	test('the text render and the map renders take the same pieces, and refuse the same pieces by the same error', () => {
+		const good: TestPiece[] = [
+			'',
+			'new',
+			{ source: main, start: 0, end: 21 },
+			{ source: main, start: 21, end: 21 },
+			{ source: main, start: 3, end: 3, text: 'anchor' },
+			{ source: main, start: 0, end: 21, text: '' },
+			{ source: main, start: 0, end: 5, text: 'let', name: 'const' },
+			{ source: main, start: 0, end: 5, text: undefined, name: undefined },
+		];
+		for (const piece of good) {
+			expect(render([piece]).text).toBe(rewritePieceText(piece));
+			expect(renderDecoded([piece]).text).toBe(rewritePieceText(piece));
+		}
+		const outOf = (start: number, end: number) => `RangeError: The range ${start}..${end} is out of 0..21.`;
+		const noSource = 'TypeError: The range 0..1 has no source.';
+		const noText = 'TypeError: The range 0..5 has a text that is not a string.';
+		const noName = 'TypeError: The range 0..5 has a name that is not a string.';
+		const bad: [unknown, string][] = [
+			...[[-1, 2], [1.5, 2], [3, 2], [0, 22], [Number.NaN, 2], [0, Infinity], [0, 2 ** 32]].flatMap((
+				[start, end],
+			): [unknown, string][] => [
+				[{ source: main, start, end }, outOf(start!, end!)],
+				[{ source: main, start, end, text: 'x' }, outOf(start!, end!)],
+				[{ source: main, start, end, text: '' }, outOf(start!, end!)],
+			]),
+			[{ start: 0, end: 1 }, noSource],
+			[{ start: 0, end: 1, text: 'x' }, noSource],
+			[{ source: null, start: 0, end: 1, text: 'x' }, noSource],
+			[{ source: {}, start: 0, end: 1 }, noSource],
+			[{ source: { content: 5 }, start: 0, end: 1, text: 'x' }, noSource],
+			[{ source: 'text', start: 0, end: 1 }, noSource],
+			[{ source: main, start: 0, end: 5, text: null }, noText],
+			[{ source: main, start: 0, end: 5, text: 0 }, noText],
+			[{ source: main, start: 0, end: 5, text: false }, noText],
+			[{ source: main, start: 0, end: 5, text: ['let'] }, noText],
+			[{ source: main, start: 0, end: 5, text: { toString: () => 'let' } }, noText],
+			// also of a range without text, whose name no map reads
+			...[null, 5, false, {}, ['a']].flatMap((name): [unknown, string][] => [
+				[{ source: main, start: 0, end: 5, text: 'let', name }, noName],
+				[{ source: main, start: 0, end: 5, name }, noName],
+			]),
+			[undefined, 'TypeError: A piece is a string or a range, not undefined.'],
+			[null, 'TypeError: A piece is a string or a range, not null.'],
+			[false, 'TypeError: A piece is a string or a range, not false.'],
+			[5, 'TypeError: A piece is a string or a range, not 5.'],
+			[() => 'x', 'TypeError: A piece is a string or a range, not a function.'],
+		];
+		for (const [piece, error] of bad) {
+			expect(thrown(() => rewritePieceText(piece as TestPiece))).toBe(error);
+			// the map names the source of a range that has one
+			expect(thrown(() => render(['new', piece as TestPiece]))?.replace(' of main.js', '')).toBe(error);
+			expect(thrown(() => renderDecoded([piece as TestPiece]))?.replace(' of main.js', '')).toBe(error);
+		}
 	});
 
 	test('the map renders give the text that the values of rewritePieceText join to, and throw where the text render or the join throws', () => {
@@ -435,20 +463,7 @@ describe('renderWithSourceMap', () => {
 				}
 			}
 		}
-		expect([agreed, threw]).toEqual([688, 320]);
-	});
-
-	test('a range with text that a rewrite renders as written maps nowhere where it is no range of its source', () => {
-		const rewrite = createSourceRewrite(main);
-		rewrite.replace(0, 5, { source: main, start: 0, end: 50, text: 'let' });
-		const pieces: TestPiece[] = [];
-		rewrite.render(0, 21, piece => pieces.push(piece));
-		expect(pieces.map(rewritePieceText).join('')).toBe('let a = 1;\nlog(a);\n');
-		const again = createSourceRewrite(main);
-		again.replace(0, 5, 'let');
-		expect(renderWithSourceMap(sink => rewrite.render(0, 21, sink), (source: TestSource) => source.name)).toEqual(
-			renderWithSourceMap(sink => again.render(0, 21, sink), (source: TestSource) => source.name),
-		);
+		expect([agreed, threw]).toEqual([32, 976]);
 	});
 
 	test('the map of a rewrite render is the map of its pieces', () => {
@@ -478,7 +493,7 @@ describe('renderWithSourceMap', () => {
 			const content = Array.from({ length: 1 + random(16) }, () => chars[random(chars.length)]).join('');
 			const source: TestSource = { name: 'random.js', content };
 			const { length } = content;
-			const rewrite = createSourceRewrite<TestSource, { name?: string }>(source);
+			const rewrite = createSourceRewrite(source);
 			if (length > 2 && random(2)) {
 				const start = 1 + random(length - 2);
 				const end = start + 1 + random(length - start - 1);
@@ -514,7 +529,7 @@ describe('renderWithSourceMap', () => {
 
 describe('renderWithDecodedSourceMap', () => {
 	test('gives the text and map of renderWithSourceMap, with the mappings decoded', () => {
-		const rewrite = createSourceRewrite<TestSource, { name?: string }>(main);
+		const rewrite = createSourceRewrite(main);
 		rewrite.replace(6, 7, { source: main, start: 6, end: 7, text: 'b', name: 'a' });
 		rewrite.insertAfter(0, '// generated\n');
 		const renderAll = (sink: (piece: TestPiece) => void) => rewrite.render(0, main.content.length, sink);
@@ -541,31 +556,16 @@ describe('renderWithDecodedSourceMap', () => {
 		const bad: TestPiece[][] = [
 			...[[-1, 2], [1.5, 2], [3, 2], [0, 22], [Number.NaN, 2], [0, Infinity]].flatMap(([start, end]) => [
 				[{ source: main, start: start!, end: end! }],
-				['new', { source: main, start: start!, end: end!, text: null } as unknown as TestPiece],
+				['new', { source: main, start: start!, end: end!, text: 'x' }],
 			]),
 			[{ start: 0, end: 1 } as TestPiece],
+			[{ source: null, start: 0, end: 1, text: 'x' } as unknown as TestPiece],
 			[{ source: { name: 'empty' }, start: 0, end: 0 } as TestPiece],
 		];
 		for (const pieces of bad) {
 			const error = thrown(() => render(pieces));
 			expect(error).toBeDefined();
 			expect(thrown(() => renderDecoded(pieces))).toBe(error);
-		}
-	});
-
-	test('gives the map of renderWithSourceMap for the text of a range that is no range of its source, for the text null and for a text that is no string', () => {
-		const lists: TestPiece[][] = [
-			...[[-1, 2], [0, 22], [Number.NaN, 2]].map(([start, end]): TestPiece[] => [
-				{ source: main, start: 0, end: 5 },
-				{ source: main, start: start!, end: end!, text: 'x\ny', name: 'n' },
-				{ source: other, start: 0, end: 3 },
-			]),
-			[{ source: null, start: 0, end: 1, text: 'x' } as unknown as TestPiece, { source: main, start: 0, end: 5 }],
-			['new', { source: main, start: 0, end: 12, text: null } as unknown as TestPiece],
-			['new', { source: main, start: 6, end: 7, text: 5, name: 'a' } as unknown as TestPiece],
-		];
-		for (const pieces of lists) {
-			expect(renderDecoded(pieces)).toEqual(decodedOf(render(pieces)));
 		}
 	});
 
