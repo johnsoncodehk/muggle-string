@@ -185,6 +185,11 @@ export const variants = [
 			},
 			{
 				file: 'sourceRewrite.ts',
+				find: `function sortOrder(values: Int32Array, size: number, stride: number, bias: number) {`,
+				replace: `function sortOrder(values: ArrayLike<number>, size: number, stride: number, bias: number) {`,
+			},
+			{
+				file: 'sourceRewrite.ts',
 				find: `[writers[0]!.keys, writers[0]!.code] : [new Int32Array(0), []];`,
 				replace: `[writers[0]!.keys, writers[0]!.code] : [[], []];`,
 			},
@@ -281,9 +286,17 @@ export const variants = [
 		replacements: [
 			{
 				file: 'sourceRewrite.ts',
-				find: `					sink({ ...data, source, start: pos, end: runEnd });`,
-				replace: `					const copied = { ...data, source, start: pos, end: runEnd, copy: source.content.slice(pos, runEnd) };
-					sink(copied);`,
+				find: `					sink(
+						data
+							? { ...data, source, start: pos, end: runEnd }
+							: { source, start: pos, end: runEnd } as Piece<RewriteOrigin<S, Data>>,
+					);`,
+				replace: `					const copy = source.content.slice(pos, runEnd);
+					sink(
+						data
+							? { ...data, source, start: pos, end: runEnd, copy }
+							: { source, start: pos, end: runEnd, copy } as object as Piece<RewriteOrigin<S, Data>>,
+					);`,
 			},
 			{
 				file: 'sourceRewrite.ts',
@@ -342,32 +355,68 @@ export const variants = [
 			},
 			{
 				file: 'sourceMap.ts',
-				find: `		const { buffer, digits } = this;
-		let length = this.length;
-`,
-				replace: '',
-			},
-			{
-				file: 'sourceMap.ts',
-				find: `			buffer[length++] = digits[digit]!;`,
-				replace: `			this.mappings += base64[digit]!;`,
-			},
-			{
-				file: 'sourceMap.ts',
-				find: `		this.length = length;
-`,
-				replace: '',
-			},
-			{
-				file: 'sourceMap.ts',
 				find: /^\treserve\(\) \{[\s\S]*?^\t\}\n/m,
 				replace: `	reserve() {}
 `,
 			},
 			{
 				file: 'sourceMap.ts',
-				find: `			this.buffer[this.length++] = comma;`,
-				replace: `			this.mappings += ',';`,
+				find: `		const { buffer, digits } = this;
+		let length = this.length;
+		if (this.lineHasSegment) {
+			buffer[length++] = comma;
+		}
+		this.length = writeVlq(buffer, length, digits, column - this.lastColumn);`,
+				replace: `		if (this.lineHasSegment) {
+			this.mappings += ',';
+		}
+		this.mappings = writeVlq(this.mappings, column - this.lastColumn);`,
+			},
+			{
+				file: 'sourceMap.ts',
+				find: `		const { buffer, digits } = this;
+		let length = this.length;
+		if (this.lineHasSegment) {
+			buffer[length++] = comma;
+		}
+		length = writeVlq(buffer, length, digits, column - this.lastColumn);
+		length = writeVlq(buffer, length, digits, source - this.lastSource);
+		length = writeVlq(buffer, length, digits, line - this.lastLine);
+		length = writeVlq(buffer, length, digits, sourceColumn - this.lastSourceColumn);
+		if (name !== -1) {
+			length = writeVlq(buffer, length, digits, name - this.lastName);
+			this.lastName = name;
+		}
+		this.length = length;`,
+				replace: `		let { mappings } = this;
+		if (this.lineHasSegment) {
+			mappings += ',';
+		}
+		mappings = writeVlq(mappings, column - this.lastColumn);
+		mappings = writeVlq(mappings, source - this.lastSource);
+		mappings = writeVlq(mappings, line - this.lastLine);
+		mappings = writeVlq(mappings, sourceColumn - this.lastSourceColumn);
+		if (name !== -1) {
+			mappings = writeVlq(mappings, name - this.lastName);
+			this.lastName = name;
+		}
+		this.mappings = mappings;`,
+			},
+			{
+				file: 'sourceMap.ts',
+				find: `function writeVlq(buffer: Uint8Array, length: number, digits: Uint8Array, value: number) {`,
+				replace: `function writeVlq(mappings: string, value: number) {`,
+			},
+			{
+				file: 'sourceMap.ts',
+				find: `		buffer[length++] = digits[digit]!;
+	}
+	while (rest);
+	return length;`,
+				replace: `		mappings += base64[digit]!;
+	}
+	while (rest);
+	return mappings;`,
 			},
 			{
 				file: 'sourceMap.ts',
@@ -390,8 +439,8 @@ export const variants = [
 		replacements: [
 			{
 				file: 'sourceMap.ts',
-				find: /^\tif \(code < 128\) \{[\s\S]*?^\t\}\n/m,
-				replace: '',
+				find: `				const kind = code < 128 ? classes[code]! : unicodeClassOf(content, offset);`,
+				replace: `				const kind = unicodeClassOf(content, offset);`,
 			},
 		],
 	},
