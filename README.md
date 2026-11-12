@@ -2,7 +2,7 @@
 
 I wrote muggle-string for [vuejs/language-tools](https://github.com/vuejs/language-tools), to turn Vue single-file components into TypeScript code for the language server. It lets you rewrite source text from several places at once, and then map the result back — both as language-server spans and as a v3 source map. No dependencies.
 
-> **Note:** Version 1.0 replaced the 0.4 segment-array helpers (`replace`, `replaceSourceRange`, `toString`, ...). Those APIs are gone, not deprecated.
+> **Note:** Version 2.0 makes a few 1.x APIs stricter. See [Upgrading from 1.x](#upgrading-from-1x). Version 1.0 replaced the 0.4 segment-array helpers (`replace`, `replaceSourceRange`, `toString`, ...). Those APIs are gone, not deprecated.
 
 ## Install
 
@@ -269,6 +269,22 @@ All offsets point into the original text, even after edits.
 | get a source map | `renderWithSourceMap` (see above) |
 | get decoded segments | `renderWithDecodedSourceMap` |
 | read segments from a map | `decodeMappings(mappings)` |
+
+## Upgrading from 1.x
+
+| 1.x | 2.0 |
+|---|---|
+| `createSourceRewrite<S, { view: string }>(source)`, kept ranges have `piece.view` | Same call, kept ranges have `piece.data.view`. `Data` can be any type, not only an object. |
+| `rewrite.render(start, end, sink, { view: 'a' })` | The same: the last argument is the data. |
+| `cut(start, end, { view: 'a', placeholder })` | `cut(start, end, { data: { view: 'a' }, placeholder })`. Any other option throws. |
+| A range you write carries the data fields: `{ source, start, end, text, view: 'a' }` | `{ source, start, end, text, data: { view: 'a' } }` |
+| `createSourceRewrite<S, { name?: string }>(source)` to write ranges with `name` | `name` is a field of every range; no `Data` needed. |
+| Code that is not code (`undefined`, `false`, a bad range) fails at render, or reaches the sink | The edit that passes it throws. |
+| Arrays are read at render, so later changes to them show | Arrays are read when passed. A slice pushed into the placeholder array of its own cut no longer renders there: place it with an insert next to the cut, such as `insertAfter(start, slice)`. |
+| A slice placed inside itself makes every later `render` throw | The edit that places it throws, and nothing else changes. |
+| `unrendered()` lists slices that have not rendered yet | It lists slices that are placed nowhere a view can reach, whatever has rendered. |
+| A range with `text` renders its text whatever its range: when the range is not a range of its source, the text maps to nothing. `text: null` is no text. A `name` that is not a string goes into `names`. (Up to 1.0.4 the map functions throw for such a range, and render nothing for `text: null`.) | Every range is checked, with `text` or without. A range that is not a range of its source, `text: null`, and a `text` or `name` that is not a string throw, in `rewritePieceText` and in the map functions alike. |
+| A slice of a 1.x copy of the package can be placed in a rewrite of another copy | A slice of 2.0 can, in a rewrite of any 2.0 copy. A 1.x slice is not code for 2.0, so the edit throws. |
 
 ## Reference
 
