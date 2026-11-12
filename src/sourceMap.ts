@@ -77,7 +77,7 @@ const enum CharClass {
  * or whose `text` or `name` is neither undefined nor a string, throws when it reaches the sink.
  */
 export function renderWithSourceMap<S extends Source>(
-	render: (sink: (piece: Piece<{ source: S; name?: string }>) => void) => void,
+	render: (sink: (piece: Piece<S, unknown>) => void) => void,
 	sourceName: (source: S) => string,
 ): { text: string; map: SourceMap } {
 	// before the render, which may render slices that render only once
@@ -222,7 +222,7 @@ function fieldOf(segment: readonly number[], index: number, line: number) {
  * empty last line included. The segments follow its rules, and it throws where it throws. It needs no `TextDecoder`.
  */
 export function renderWithDecodedSourceMap<S extends Source>(
-	render: (sink: (piece: Piece<{ source: S; name?: string }>) => void) => void,
+	render: (sink: (piece: Piece<S, unknown>) => void) => void,
 	sourceName: (source: S) => string,
 ): { text: string; map: DecodedSourceMap } {
 	return renderWith(render, sourceName, new ArrayWriter());
@@ -230,7 +230,7 @@ export function renderWithDecodedSourceMap<S extends Source>(
 
 /** The render of both maps, which decides every segment of them and gives each to `writer`. */
 function renderWith<S extends Source, Mappings>(
-	render: (sink: (piece: Piece<{ source: S; name?: string }>) => void) => void,
+	render: (sink: (piece: Piece<S, unknown>) => void) => void,
 	sourceName: (source: S) => string,
 	writer: SegmentWriter<Mappings>,
 ) {

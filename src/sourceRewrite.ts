@@ -25,22 +25,12 @@ interface PlacedSlice {
 }
 
 /**
- * What a range of a rewrite carries beyond its offsets: its `source`; `name`, the original name of the symbol that a
- * range with `text` renames, which a source map takes; and `data`, the value of the consumer, which the rewrite never
- * reads. A kept range has the `data` of the cut or the view that renders it, and no `data` field when that is
- * undefined. `data` is required where `Data` does not include undefined.
- */
-export type RewriteOrigin<S extends Source, Data = undefined> =
-	& { source: S; name?: string }
-	& (undefined extends Data ? { data?: Data } : { data: Data });
-
-/**
  * Code written into a rewrite: pieces, slices, which render their cut in place, and arrays of code. Only `cut` makes a
  * slice; any other object is a range. Code is checked when it is written: a value that is not code, or a range that no
  * render takes, throws there. An array is read once, when it is written; a range is passed on as the object it is.
  */
 export type RewriteCode<S extends Source, Data = undefined> =
-	| Piece<RewriteOrigin<S, Data>>
+	| Piece<S, Data>
 	| RewriteSlice<S, Data>
 	| readonly RewriteCode<S, Data>[];
 
@@ -74,7 +64,7 @@ export interface RewriteWriter<S extends Source, Data = undefined> {
 /** What `cut` returns; no other object is a slice. */
 export interface RewriteSlice<S extends Source, Data = undefined> extends PlacedSlice {
 	/** Passes the pieces of the slice to `sink`, in order: no string is empty, and kept text is a range without `text`. */
-	render(sink: (piece: Piece<RewriteOrigin<S, Data>>) => void): void;
+	render(sink: (piece: Piece<S, Data>) => void): void;
 }
 
 /**
@@ -114,7 +104,7 @@ export interface SourceRewrite<S extends Source, Data = undefined> extends Rewri
 	render(
 		start: number,
 		end: number,
-		sink: (piece: Piece<RewriteOrigin<S, Data>>) => void,
+		sink: (piece: Piece<S, Data>) => void,
 		...data: undefined extends Data ? [data?: Data] : [data: Data]
 	): void;
 	/**
@@ -142,7 +132,7 @@ export function createSourceRewrite<S extends Source, Data = undefined>(source: 
 	};
 }
 
-type Sink<S extends Source, Data> = (piece: Piece<RewriteOrigin<S, Data>>) => void;
+type Sink<S extends Source, Data> = (piece: Piece<S, Data>) => void;
 
 /**
  * The generated text of `piece`: new text, the `text` of a range, or the content of its source that it keeps. It
@@ -150,7 +140,7 @@ type Sink<S extends Source, Data> = (piece: Piece<RewriteOrigin<S, Data>>) => vo
  * `end` are not integers with 0 <= `start` <= `end` <= the length of the content, or whose `text` or `name` is neither
  * undefined nor a string, throws, with `text` or without.
  */
-export function rewritePieceText(piece: Piece<{ source: Source }>): string {
+export function rewritePieceText(piece: Piece<Source, unknown>): string {
 	if (typeof piece === 'string') {
 		return piece;
 	}
@@ -490,7 +480,7 @@ class Rewrite<S extends Source, Data> {
 	}
 
 	/** The view `start`..`end`. */
-	render(start: number, end: number, data: Data | undefined, sink: (piece: Piece<RewriteOrigin<S, Data>>) => void) {
+	render(start: number, end: number, data: Data | undefined, sink: (piece: Piece<S, Data>) => void) {
 		const { length } = this.content;
 		if (!isRange(start, end, length)) {
 			throw new RangeError(`The range ${start}..${end} is out of 0..${length}.`);
@@ -561,7 +551,7 @@ class Rewrite<S extends Source, Data> {
 		children: readonly Cut<S, Data>[] | undefined,
 		index: number,
 		data: Data | undefined,
-		sink: (piece: Piece<RewriteOrigin<S, Data>>) => void,
+		sink: (piece: Piece<S, Data>) => void,
 		tail: boolean,
 	) {
 		const { keys, code, removals, removalsSize, source } = this;
@@ -586,7 +576,7 @@ class Rewrite<S extends Source, Data> {
 					sink(
 						(data === undefined
 							? { source, start: pos, end: runEnd }
-							: { source, start: pos, end: runEnd, data }) as Piece<RewriteOrigin<S, Data>>,
+							: { source, start: pos, end: runEnd, data }) as Piece<S, Data>,
 					);
 					pos = runEnd;
 				}
@@ -1072,7 +1062,7 @@ class Cut<S extends Source, Data> implements RewriteSlice<S, Data> {
 		this[sliceBrand] = { start, end, inView: false, renderers: undefined };
 	}
 
-	render(sink: (piece: Piece<RewriteOrigin<S, Data>>) => void) {
+	render(sink: (piece: Piece<S, Data>) => void) {
 		const { rewrite } = this;
 		rewrite.freeze();
 		rewrite.rendering++;
@@ -1089,7 +1079,7 @@ class Cut<S extends Source, Data> implements RewriteSlice<S, Data> {
 /** Renders code as a rewrite holds it. */
 function renderCode<S extends Source, Data>(
 	code: RewriteCode<S, Data>,
-	sink: (piece: Piece<RewriteOrigin<S, Data>>) => void,
+	sink: (piece: Piece<S, Data>) => void,
 ) {
 	if (typeof code === 'string') {
 		if (code) {
@@ -1103,7 +1093,7 @@ function renderCode<S extends Source, Data>(
 				value.render(sink);
 			}
 			else {
-				sink(value as Piece<RewriteOrigin<S, Data>>);
+				sink(value as Piece<S, Data>);
 			}
 		}
 	}

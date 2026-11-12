@@ -18,7 +18,7 @@ interface TestSource {
 	content: string;
 }
 
-type TestPiece = Piece<{ source: TestSource; name?: string }>;
+type TestPiece = Piece<TestSource>;
 type Position = { source: string; offset: number; name: string | null };
 
 function render(pieces: TestPiece[]) {

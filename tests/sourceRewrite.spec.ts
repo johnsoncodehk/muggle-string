@@ -7,7 +7,6 @@ import {
 	createSourceRewrite,
 	type Piece,
 	type RewriteCode,
-	type RewriteOrigin,
 	type RewriteSlice,
 	type RewriteWriter,
 	renderWithDecodedSourceMap,
@@ -28,10 +27,10 @@ interface TestSource {
 /** The data of the kept pieces of a test rewrite, which a cut or a view can give none of. */
 type TestData = string | undefined;
 
-type TestPiece = Piece<RewriteOrigin<TestSource, TestData>>;
+type TestPiece = Piece<TestSource, TestData>;
 
 /** A piece whose kept range names its source. */
-type NamedPiece = Piece<{ source: TestSource | string; data?: string }>;
+type NamedPiece = string | { source: TestSource | string; start: number; end: number; text?: string; name?: string; data?: string };
 
 /** Code that renders its pieces: a slice, or a view of a rewrite. */
 interface Renders {
@@ -575,7 +574,7 @@ describe('construction errors', () => {
 		const moved = rewrite.cut(1, 2);
 		rewrite.replace(0, 1, { source, start: 0, end: 1, text: 'A' });
 		rewrite.insertBefore(3, moved);
-		const pieces: Piece<RewriteOrigin<typeof source>>[] = [];
+		const pieces: Piece<typeof source>[] = [];
 		rewrite.render(0, 3, piece => pieces.push(piece));
 		expect(pieces.map(rewritePieceText).join('')).toBe('Acb');
 	});
@@ -811,7 +810,7 @@ describe('data', () => {
 		const cutData = { feature: 'cut' };
 		const rewrite = createSourceRewrite<typeof source, { feature: string }>(source);
 		rewrite.insertBefore(6, rewrite.cut(0, 2, { data: cutData }));
-		const pieces: Piece<RewriteOrigin<typeof source, { feature: string }>>[] = [];
+		const pieces: Piece<typeof source, { feature: string }>[] = [];
 		rewrite.render(0, 6, piece => pieces.push(piece), viewData);
 		expect(pieces).toStrictEqual([
 			{ source, start: 2, end: 6, data: viewData },
@@ -829,6 +828,52 @@ describe('data', () => {
 		expect(kept.map(piece => Object.keys(piece))).toEqual([['source', 'start', 'end'], ['source', 'start', 'end']]);
 	});
 
+	test('a piece has the fields of the package and no other, each only where its producer has a value for it', () => {
+		const source = { name: 'a.js', content: 'abc' };
+		type Data = { feature: string };
+		// a producer of one source gives none
+		const bare: Piece[] = ['x', { start: 0, end: 1 }, { start: 1, end: 2, text: 'B', name: 'b' }];
+		const full: Piece<typeof source, Data> = { source, start: 0, end: 1, text: 'A', name: 'a', data: { feature: 'x' } };
+		const refused: unknown[] = [
+			// @ts-expect-error a piece without a source has none
+			((): Piece => ({ source, start: 0, end: 1 }))(),
+			// @ts-expect-error a piece of a source has it
+			((): Piece<typeof source> => ({ start: 0, end: 1 }))(),
+			// @ts-expect-error a field of the producer is no field of a piece
+			((): Piece<typeof source> => ({ source, start: 0, end: 1, feature: 'x' }))(),
+			// @ts-expect-error nor are the fields of its data
+			((): Piece<typeof source, Data> => ({ source, start: 0, end: 1, feature: 'x' }))(),
+			// @ts-expect-error the data is of the type of the piece
+			((): Piece<typeof source, Data> => ({ source, start: 0, end: 1, data: 'x' }))(),
+			// @ts-expect-error and is given where the type has no undefined
+			((): Piece<typeof source, Data> => ({ source, start: 0, end: 1 }))(),
+			// @ts-expect-error a piece without data has none
+			((): Piece<typeof source> => ({ source, start: 0, end: 1, data: { feature: 'x' } }))(),
+		];
+		expect(refused).toHaveLength(7);
+		// a consumer of any data takes the pieces of every data
+		const any: Piece<typeof source, unknown>[] = [full, { source, start: 1, end: 2 }];
+		expect(any.map(rewritePieceText).join('')).toBe('Ab');
+		// @ts-expect-error the text render reads the source of a range
+		expect(() => rewritePieceText(bare[1]!)).toThrow('The range 0..1 has no source.');
+		// the pieces of one source render with it
+		const withSource = bare.map(piece => typeof piece === 'string' ? piece : { ...piece, source });
+		expect(withSource.map(rewritePieceText).join('')).toBe('xaB');
+		expect(renderWithSourceMap(sink => withSource.forEach(sink), (from: typeof source) => from.name).map.names).toEqual(['b']);
+		// a rewrite adds no field to a range that is written, and gives its kept ranges the fields that have a value
+		const rewrite = createSourceRewrite<typeof source, Data | undefined>(source);
+		rewrite.replace(1, 2, full);
+		rewrite.insertBefore(3, rewrite.cut(0, 1));
+		const rendered: Piece<typeof source, Data | undefined>[] = [];
+		rewrite.render(0, 3, piece => rendered.push(piece), { feature: 'view' });
+		expect(rendered[0]).toBe(full);
+		expect(rendered.map(piece => typeof piece === 'string' ? [] : Object.keys(piece))).toEqual([
+			['source', 'start', 'end', 'text', 'name', 'data'],
+			['source', 'start', 'end', 'data'],
+			['source', 'start', 'end'],
+		]);
+	});
+
 	test('data with the names of the fields of the package is data: the rewrite and the renders never read it', () => {
 		const source = { name: 'a.js', content: 'abc' };
 		type Data = { text: string; placeholder: string; name: string; source: string; start: number; end: number; render: string };
@@ -837,7 +882,7 @@ describe('data', () => {
 		const cut = rewrite.cut(0, 1, { data: data('cut'), placeholder: 'P' });
 		rewrite.insertBefore(3, cut);
 		rewrite.replace(1, 2, { source, start: 1, end: 2, text: 'B', name: 'b', data: data('range') });
-		const pieces: Piece<RewriteOrigin<typeof source, Data>>[] = [];
+		const pieces: Piece<typeof source, Data>[] = [];
 		rewrite.render(0, 3, piece => pieces.push(piece), data('view'));
 		expect(pieces).toStrictEqual([
 			'P',

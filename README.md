@@ -279,6 +279,7 @@ All offsets point into the original text, even after edits.
 | `cut(start, end, { view: 'a', placeholder })` | `cut(start, end, { data: { view: 'a' }, placeholder })`. Any other option throws. |
 | A range you write carries the data fields: `{ source, start, end, text, view: 'a' }` | `{ source, start, end, text, data: { view: 'a' } }` |
 | `createSourceRewrite<S, { name?: string }>(source)` to write ranges with `name` | `name` is a field of every range; no `Data` needed. |
+| `Piece<{ source: S; name?: string }>`, `Piece<RewriteOrigin<S, Data>>`, and `Piece<Origin>` with fields of your own | `Piece<S>`, `Piece<S, Data>`. A range has only the fields of the library; yours go inside `data`. `RewriteOrigin` is gone. |
 | Code that is not code (`undefined`, `false`, a bad range) fails at render, or reaches the sink | The edit that passes it throws. |
 | Arrays are read at render, so later changes to them show | Arrays are read when passed. A slice pushed into the placeholder array of its own cut no longer renders there: place it with an insert next to the cut, such as `insertAfter(start, slice)`. |
 | A slice placed inside itself makes every later `render` throw | The edit that places it throws, and nothing else changes. |
@@ -311,12 +312,26 @@ All offsets point into the original text, even after edits.
 Pieces are either strings or ranges:
 
 ```ts
-type Piece<Origin = unknown> = string | (Origin & { start: number; end: number; text?: string });
+type Piece<S extends Source | undefined = undefined, Data = undefined> =
+	| string
+	| (
+		& { start: number; end: number; text?: string; name?: string }
+		& (undefined extends S ? { source?: S } : { source: S })
+		& (undefined extends Data ? { data?: Data } : { data: Data })
+	);
 ```
 
 - String: new text with no source mapping
 - Range without `text`: kept source text from `start` to `end`
 - Range with `text`: generated text that maps to the source range
+
+A range has these fields and no others. The types refuse any other field; the library itself never reads or adds one. A range that the library makes has no field for a value it does not have:
+
+- `source` — the source of the range. `Piece` alone has none, for a producer whose ranges are all of one text. `Piece<S>` has one; `rewritePieceText` and the source map functions need it.
+- `name` — the original name of a symbol that a range with `text` renames, for source maps
+- `data` — your own value, of type `Data`. The library never reads it. Everything you want to carry on a range goes here.
+
+A rewrite renders `Piece<S, Data>`. To take pieces with any data, as `renderWithSourceMap` does, use `Piece<S, unknown>`.
 
 ### Source maps
 

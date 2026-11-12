@@ -28,9 +28,15 @@ beforeAll(() => {
 	});
 	fs.writeFileSync(
 		path.join(dir, 'declaration.ts'),
-		`import type { Piece as Declared } from '../../src';\n${declaration}`
+		`import type { Piece as Declared, Source } from '../../src';\n${declaration}`
 			+ 'type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;\n'
-			+ 'export const same: [Equal<Piece, Declared>, Equal<Piece<{ source: object }>, Declared<{ source: object }>>] = [true, true];\n',
+			+ 'type Named = Source & { name: string };\n'
+			+ 'export const same: [\n'
+			+ '\tEqual<Piece, Declared>,\n'
+			+ '\tEqual<Piece<Named>, Declared<Named>>,\n'
+			+ '\tEqual<Piece<Named, { feature: string }>, Declared<Named, { feature: string }>>,\n'
+			+ '\tEqual<Piece<Source | undefined, unknown>, Declared<Source | undefined, unknown>>,\n'
+			+ '] = [true, true, true, true];\n',
 	);
 	fs.writeFileSync(
 		path.join(dir, 'tsconfig.json'),
