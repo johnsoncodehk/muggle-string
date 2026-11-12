@@ -101,7 +101,7 @@ console.log(rewrite.unrendered().length);
 // 0
 ```
 
-The `placeholder` option renders where the cut was made. Kept text from a slice carries the data you pass to `cut`.
+The `placeholder` option renders where the cut was made.
 
 Only `cut` creates a slice. Any other object you pass is a piece and is handed through as-is.
 
@@ -119,7 +119,9 @@ Whether to join pieces into a string is your choice. `rewritePieceText(piece)` e
 
 Views can overlap. You can render the same range multiple times, or render several ranges that cover the same source positions.
 
-Kept text picks up the data you pass to `render`:
+### Data
+
+Kept text can carry a value of yours, in the `data` field of its range. Declare its type on the rewrite, and give the value to `render`:
 
 ```ts
 import { createSourceRewrite, rewritePieceText } from 'muggle-string';
@@ -135,7 +137,7 @@ function view(start: number, end: number, name: string) {
 	rewrite.render(start, end, piece => {
 		text += rewritePieceText(piece);
 		if (typeof piece !== 'string' && piece.text === undefined) {
-			kept.push(piece.view);
+			kept.push(piece.data.view);
 		}
 	}, { view: name });
 	console.log(JSON.stringify(text), kept.join());
@@ -147,6 +149,30 @@ view(4, 22, 'second');
 // "x = 1;\nlet b = 2;\n" second
 ```
 
+The library never looks inside `data`, so it can be any value with any field names. It is passed on as the same object, not copied.
+
+The text of a cut has the data of its cut, `cut(start, end, { data })`, wherever its slice renders, not the data of the view around it:
+
+```ts
+import { createSourceRewrite } from 'muggle-string';
+
+const source = { content: 'abcdef' };
+const rewrite = createSourceRewrite<typeof source, string | undefined>(source);
+rewrite.insertAfter(0, rewrite.cut(2, 4));
+rewrite.insertAfter(0, rewrite.cut(4, 6, { data: 'own' }));
+
+const kept: string[] = [];
+rewrite.render(0, 6, piece => {
+	if (typeof piece !== 'string') {
+		kept.push(`${piece.start}..${piece.end}:${piece.data}`);
+	}
+}, 'view');
+console.log(kept.join(' '));
+// 2..4:undefined 4..6:own 0..2:view
+```
+
+A range without data has no `data` field. When the `Data` type does not include `undefined`, as `{ view: string }` above, `cut` and `render` require the data.
+
 ### Source maps
 
 Generate a v3 source map with `renderWithSourceMap` or `renderWithDecodedSourceMap`:
@@ -155,7 +181,7 @@ Generate a v3 source map with `renderWithSourceMap` or `renderWithDecodedSourceM
 import { createSourceRewrite, renderWithSourceMap } from 'muggle-string';
 
 const source = { name: 'main.js', content: 'log(name);\nconst name = "Ada";\n' };
-const rewrite = createSourceRewrite<typeof source, { name?: string }>(source);
+const rewrite = createSourceRewrite(source);
 
 for (const { index: start } of source.content.matchAll(/\bname\b/g)) {
 	const end = start + 'name'.length;
@@ -221,12 +247,13 @@ All offsets point into the original text, even after edits.
 - `insertAfter(offset, code)` — attach code after the character before `offset`
 - `replace(start, end, code)` — remove the range and insert `code` in its place
 - `cut(start, end, options?)` — remove a range and return a slice you can place elsewhere
+  - `options.data` — the data of the kept text of the cut
   - `options.placeholder` — code that renders where the cut was made
 - `unrendered()` — list slices that haven't been rendered yet
 
 ### Rendering
 
-- `render(start, end, sink, data?)` — call `sink(piece)` for each piece in the range
+- `render(start, end, sink, data?)` — call `sink(piece)` for each piece in the range; `data` is the data of its kept text
 - `slice.render(sink)` — call `sink(piece)` for each piece of a slice
 - `rewritePieceText(piece)` — extract the text from a piece (string or range)
 
@@ -257,6 +284,7 @@ Common errors:
 
 - **Offset out of range** — offset is not within `0..content.length`
 - **Invalid rank** — rank is negative or not an integer
+- **Unknown cut option** — `cut` takes only `data` and `placeholder`
 - **Crossing cuts** — a cut overlaps another cut (cuts can nest but not cross)
 - **Cut placed inside itself** — a slice is placed within its own range (including `insertBefore` at its start and `insertAfter` at its end), or within a slice that it renders
 - **Editing while rendering** — you called an edit method from inside a `render` sink

@@ -250,13 +250,14 @@ describe('renderWithSourceMap', () => {
 		expect(map.names).toEqual(['const', 'a']);
 	});
 
-	test('kept text gives no name, as it is its own name, even with the name field of a view', () => {
-		const rewrite = createSourceRewrite<TestSource, { name: string }>(main);
-		rewrite.replace(6, 7, { source: main, start: 6, end: 7, text: 'b', name: 'a' });
-		const { map } = renderWithSourceMap(
-			sink => rewrite.render(0, main.content.length, sink, { name: 'view' }),
+	test('kept text gives no name, as it is its own name, and the data of a range is not read, whatever its fields', () => {
+		const rewrite = createSourceRewrite<TestSource, { name: string; text: string }>(main);
+		rewrite.replace(6, 7, { source: main, start: 6, end: 7, text: 'b', name: 'a', data: { name: 'range', text: 'range' } });
+		const { text, map } = renderWithSourceMap(
+			sink => rewrite.render(0, main.content.length, sink, { name: 'view', text: 'view' }),
 			(from: TestSource) => from.name,
 		);
+		expect(text).toBe(main.content.slice(0, 6) + 'b' + main.content.slice(7));
 		expect(map.names).toEqual(['a']);
 		const { map: kept } = check([{ source: main, start: 0, end: 13, name: 'kept' }]);
 		expect(kept.names).toEqual([]);
@@ -493,7 +494,7 @@ describe('renderWithSourceMap', () => {
 			const content = Array.from({ length: 1 + random(16) }, () => chars[random(chars.length)]).join('');
 			const source: TestSource = { name: 'random.js', content };
 			const { length } = content;
-			const rewrite = createSourceRewrite<TestSource, { name?: string }>(source);
+			const rewrite = createSourceRewrite(source);
 			if (length > 2 && random(2)) {
 				const start = 1 + random(length - 2);
 				const end = start + 1 + random(length - start - 1);
@@ -529,7 +530,7 @@ describe('renderWithSourceMap', () => {
 
 describe('renderWithDecodedSourceMap', () => {
 	test('gives the text and map of renderWithSourceMap, with the mappings decoded', () => {
-		const rewrite = createSourceRewrite<TestSource, { name?: string }>(main);
+		const rewrite = createSourceRewrite(main);
 		rewrite.replace(6, 7, { source: main, start: 6, end: 7, text: 'b', name: 'a' });
 		rewrite.insertAfter(0, '// generated\n');
 		const renderAll = (sink: (piece: TestPiece) => void) => rewrite.render(0, main.content.length, sink);

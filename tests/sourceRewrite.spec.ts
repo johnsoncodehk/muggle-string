@@ -10,6 +10,7 @@ import {
 	type RewriteOrigin,
 	type RewriteSlice,
 	type RewriteWriter,
+	renderWithSourceMap,
 	rewritePieceText,
 	type SourceRewrite,
 } from '../src';
@@ -23,13 +24,13 @@ interface TestSource {
 	content: string;
 }
 
-/** The fields of the kept pieces of a test rewrite. */
-type TestData = { data: string };
+/** The data of the kept pieces of a test rewrite, which a cut or a view can give none of. */
+type TestData = string | undefined;
 
 type TestPiece = Piece<RewriteOrigin<TestSource, TestData>>;
 
 /** A piece whose kept range names its source. */
-type NamedPiece = Piece<{ source: TestSource | string; data: string }>;
+type NamedPiece = Piece<{ source: TestSource | string; data?: string }>;
 
 /** Code that renders its pieces: a slice, or a view of a rewrite. */
 interface Renders {
@@ -72,7 +73,7 @@ function view(
 	start = 0,
 	end = rewrite.source.content.length,
 ): Renders {
-	return { render: sink => rewrite.render(start, end, sink, { data }) };
+	return { render: sink => rewrite.render(start, end, sink, data) };
 }
 
 function alphabet(length: number) {
@@ -329,7 +330,7 @@ describe('scenarios', () => {
 
 		const source = { content: 'abc' };
 		const flagged = createSourceRewrite<typeof source, { render: boolean }>(source);
-		flagged.replace(1, 2, { source, start: 1, end: 2, text: 'X', render: false });
+		flagged.replace(1, 2, { source, start: 1, end: 2, text: 'X', data: { render: false } });
 		const texts: string[] = [];
 		flagged.render(0, 3, piece => texts.push(rewritePieceText(piece)), { render: true });
 		expect(texts).toEqual(['a', 'X', 'c']);
@@ -516,7 +517,7 @@ describe('construction errors', () => {
 		const moved = rewrite.cut(1, 2);
 		rewrite.replace(0, 1, { source, start: 0, end: 1, text: 'A' });
 		rewrite.insertBefore(3, moved);
-		const pieces: Piece<RewriteOrigin<typeof source, {}>>[] = [];
+		const pieces: Piece<RewriteOrigin<typeof source>>[] = [];
 		rewrite.render(0, 3, piece => pieces.push(piece));
 		expect(pieces.map(rewritePieceText).join('')).toBe('Acb');
 	});
@@ -588,9 +589,9 @@ describe('construction errors', () => {
 		const rewrite = createRewrite(s, 'abc');
 		const slice = rewrite.cut(1, 2, { data: 'moved' });
 		const message = 'The rewrite is rendering.';
-		expect(() => rewrite.render(0, 3, () => rewrite.insertBefore(0, 'x'), { data: 'v' })).toThrow(message);
+		expect(() => rewrite.render(0, 3, () => rewrite.insertBefore(0, 'x'), 'v')).toThrow(message);
 		expect(() => slice.render(() => rewrite.writer(0).replace(0, 1, 'x'))).toThrow(message);
-		expect(() => rewrite.render(0, 3, () => rewrite.cut(0, 1, { data: 'late' }), { data: 'v' })).toThrow(message);
+		expect(() => rewrite.render(0, 3, () => rewrite.cut(0, 1, { data: 'late' }), 'v')).toThrow(message);
 		expect(render(view(rewrite))).toBe('ac');
 	});
 
@@ -641,7 +642,202 @@ describe('construction errors', () => {
 		expect(() => rewrite.insertBefore(4, 'x')).toThrow('The offset 4 is out of 0..3.');
 		expect(() => rewrite.writer(0).replace(2, 1, 'x')).toThrow('The range 2..1 is out of 0..3.');
 		expect(() => rewrite.writer(-1)).toThrow('is not a non-negative integer');
-		expect(() => rewrite.render(2, 4, () => {}, { data: 'v' })).toThrow('The range 2..4 is out of 0..3.');
+		expect(() => rewrite.render(2, 4, () => {}, 'v')).toThrow('The range 2..4 is out of 0..3.');
+	});
+});
+
+describe('data', () => {
+	test('data is one field of a kept range, passed on as the value it is, and no field at all when undefined', () => {
+		const source = { content: 'abcdef' };
+		const viewData = { feature: 'view' };
+		const cutData = { feature: 'cut' };
+		const rewrite = createSourceRewrite<typeof source, { feature: string }>(source);
+		rewrite.insertBefore(6, rewrite.cut(0, 2, { data: cutData }));
+		const pieces: Piece<RewriteOrigin<typeof source, { feature: string }>>[] = [];
+		rewrite.render(0, 6, piece => pieces.push(piece), viewData);
+		expect(pieces).toStrictEqual([
+			{ source, start: 2, end: 6, data: viewData },
+			{ source, start: 0, end: 2, data: cutData },
+		]);
+		expect(pieces.map(piece => typeof piece !== 'string' && piece.data)).toEqual([viewData, cutData]);
+		expect((pieces[0] as { data: object }).data).toBe(viewData);
+		expect((pieces[1] as { data: object }).data).toBe(cutData);
+
+		const plain = createSourceRewrite(source);
+		plain.insertBefore(6, plain.cut(0, 2, { data: undefined }));
+		const kept: object[] = [];
+		plain.render(0, 6, piece => typeof piece !== 'string' && kept.push(piece));
+		expect(kept).toStrictEqual([{ source, start: 2, end: 6 }, { source, start: 0, end: 2 }]);
+		expect(kept.map(piece => Object.keys(piece))).toEqual([['source', 'start', 'end'], ['source', 'start', 'end']]);
+	});
+
+	test('data with the names of the fields of the package is data: the rewrite and the renders never read it', () => {
+		const source = { name: 'a.js', content: 'abc' };
+		type Data = { text: string; placeholder: string; name: string; source: string; start: number; end: number; render: string };
+		const data = (of: string): Data => ({ text: of, placeholder: of, name: of, source: of, start: 99, end: -1, render: of });
+		const rewrite = createSourceRewrite<typeof source, Data>(source);
+		const cut = rewrite.cut(0, 1, { data: data('cut'), placeholder: 'P' });
+		rewrite.insertBefore(3, cut);
+		rewrite.replace(1, 2, { source, start: 1, end: 2, text: 'B', name: 'b', data: data('range') });
+		const pieces: Piece<RewriteOrigin<typeof source, Data>>[] = [];
+		rewrite.render(0, 3, piece => pieces.push(piece), data('view'));
+		expect(pieces).toStrictEqual([
+			'P',
+			{ source, start: 1, end: 2, text: 'B', name: 'b', data: data('range') },
+			{ source, start: 2, end: 3, data: data('view') },
+			{ source, start: 0, end: 1, data: data('cut') },
+		]);
+		expect(pieces.map(rewritePieceText).join('')).toBe('PBca');
+		const { text, map } = renderWithSourceMap(
+			sink => rewrite.render(0, 3, sink, data('view')),
+			(from: typeof source) => from.name,
+		);
+		expect(text).toBe('PBca');
+		expect(map.names).toEqual(['b']);
+		expect(map.sources).toEqual(['a.js']);
+	});
+
+	test('data can be any value but undefined, which is no data', () => {
+		const source = { content: 'ab' };
+		for (const data of [0, '', false, null, 'x', 7, [1], () => 1]) {
+			const rewrite = createSourceRewrite<typeof source, unknown>(source);
+			rewrite.insertBefore(2, rewrite.cut(0, 1, { data }));
+			const kept: unknown[] = [];
+			rewrite.render(0, 2, piece => kept.push(piece), data);
+			expect(kept).toStrictEqual([{ source, start: 1, end: 2, data }, { source, start: 0, end: 1, data }]);
+		}
+	});
+
+	test('kept text has the data of its cut, wherever the slice renders, and a cut without data gives none', () => {
+		const rewrite = createRewrite(s, 'abcdefgh');
+		const plain = rewrite.cut(0, 2);
+		const own = rewrite.cut(2, 4, { data: 'own' });
+		const inOwn = rewrite.cut(4, 5);
+		const inPlain = rewrite.cut(5, 6, { data: 'deep' });
+		rewrite.insertBefore(8, [plain, own]);
+		rewrite.insertBefore(3, inOwn);
+		rewrite.insertAfter(1, inPlain);
+		expect(collect(view(rewrite, 'first'))).toStrictEqual([
+			{ source: s, start: 6, end: 8, data: 'first' },
+			{ source: s, start: 0, end: 1 },
+			{ source: s, start: 5, end: 6, data: 'deep' },
+			{ source: s, start: 1, end: 2 },
+			{ source: s, start: 2, end: 3, data: 'own' },
+			{ source: s, start: 4, end: 5 },
+			{ source: s, start: 3, end: 4, data: 'own' },
+		]);
+		// the data of a view is the data of the text that the view keeps, not of the slices placed in it
+		expect(collect(view(rewrite, 'second', 6, 8)).map(piece => typeof piece !== 'string' && piece.data))
+			.toEqual(['second', undefined, 'deep', undefined, 'own', undefined, 'own']);
+		expect(collect(plain)).toStrictEqual([
+			{ source: s, start: 0, end: 1 },
+			{ source: s, start: 5, end: 6, data: 'deep' },
+			{ source: s, start: 1, end: 2 },
+		]);
+		expect(collect(own).map(piece => typeof piece !== 'string' && piece.data)).toEqual(['own', undefined, 'own']);
+	});
+
+	test('a slice in the placeholder of a cut renders with the data of its own cut', () => {
+		const rewrite = createRewrite(s, 'abcdef');
+		const outer = rewrite.cut(0, 6, { data: 'outer' });
+		const plain = rewrite.cut(1, 3);
+		const withData = rewrite.cut(4, 5, { data: 'inner' });
+		rewrite.cut(3, 4, { data: 'held', placeholder: ['<', plain, withData, '>'] });
+		expect(collect(outer)).toStrictEqual([
+			{ source: s, start: 0, end: 1, data: 'outer' },
+			'<',
+			{ source: s, start: 1, end: 3 },
+			{ source: s, start: 4, end: 5, data: 'inner' },
+			'>',
+			{ source: s, start: 5, end: 6, data: 'outer' },
+		]);
+	});
+
+	test('a slice of another rewrite or another copy of the package renders with the data of its own cut', () => {
+		const cjs: typeof import('../src') = createRequire(__filename)('../out/cjs/index.js');
+		const rewrite = createRewrite(s, 'ab');
+		const inner = createRewrite(other, 'xy');
+		const copy = cjs.createSourceRewrite<TestSource, TestData>({ name: 'copy', content: 'z' });
+		rewrite.insertAfter(1, [inner.cut(0, 2, { data: 'inner' }), copy.cut(0, 1)]);
+		expect(collect(view(rewrite, 'view'))).toStrictEqual([
+			{ source: s, start: 0, end: 1, data: 'view' },
+			{ source: other, start: 0, end: 2, data: 'inner' },
+			{ source: 'copy', start: 0, end: 1 },
+			{ source: s, start: 1, end: 2, data: 'view' },
+		]);
+	});
+
+	test('the options of a cut are data and placeholder: any other field, or options that are no object, is an error', () => {
+		const rewrite = createSourceRewrite<TestSource, { feature: string }>({ name: s, content: 'abc' });
+		// @ts-expect-error the data of a cut goes in its option `data`
+		expect(() => rewrite.cut(0, 1, { feature: 'x' })).toThrow(
+			new TypeError('cut(0, 1, options): "feature" is not an option of a cut, which are "data" and "placeholder".'),
+		);
+		// @ts-expect-error the data of a cut goes in its option `data`
+		expect(() => rewrite.cut(0, 1, { placeholder: 'P', feature: 'x' })).toThrow('"feature" is not an option of a cut');
+		// @ts-expect-error options are an object
+		expect(() => rewrite.cut(0, 1, 'P')).toThrow(new TypeError('cut(0, 1, options): the options are "P", not an object.'));
+		// @ts-expect-error options are an object
+		expect(() => rewrite.cut(0, 1, null)).toThrow('cut(0, 1, options): the options are null, not an object.');
+		// @ts-expect-error options are an object
+		expect(() => rewrite.cut(0, 1, ['P'])).toThrow('cut(0, 1, options): the options are an array, not an object.');
+		expect(rewrite.unrendered()).toEqual([]);
+		const optional = createRewrite(s, 'abc');
+		const slice = optional.cut(0, 1, {});
+		expect(optional.cut(1, 2, undefined)).not.toBe(slice);
+		expect(optional.cut(2, 3, { data: undefined, placeholder: undefined })).not.toBe(slice);
+		expect(optional.unrendered()).toHaveLength(3);
+		expect(render(view(optional))).toBe('');
+	});
+
+	test('the types take data where it is required, and only as the type of the rewrite', () => {
+		const source = { content: 'abc' };
+		const required = createSourceRewrite<typeof source, { feature: string }>(source);
+		// @ts-expect-error a cut gives the data that its kept text needs
+		required.cut(2, 3);
+		// @ts-expect-error also beside a placeholder
+		required.cut(2, 3, { placeholder: 'P' });
+		const slice = required.cut(0, 1, { data: { feature: 'cut' } });
+		// @ts-expect-error a view gives the data that its kept text needs
+		required.render(0, 3, () => {});
+		slice.render(() => {});
+		// @ts-expect-error a slice renders with the data of its cut, and takes no other
+		slice.render(() => {}, { feature: 'x' });
+		// @ts-expect-error data is of the type of the rewrite
+		required.render(0, 3, () => {}, { feature: 1 });
+		// @ts-expect-error a range that is written gives its data too
+		required.insertBefore(0, { source, start: 0, end: 1, text: 'x' });
+		// @ts-expect-error data is not spread into the range
+		required.insertBefore(0, { source, start: 0, end: 1, text: 'x', feature: 'x' });
+		required.insertBefore(0, { source, start: 0, end: 1, text: 'x', data: { feature: 'x' } });
+		required.render(0, 3, piece => {
+			if (typeof piece !== 'string') {
+				const feature: string = piece.data.feature;
+				// @ts-expect-error data is not spread into the range
+				expect(piece.feature).toBeUndefined();
+				expect(feature).toBeTypeOf('string');
+			}
+		}, { feature: 'view' });
+
+		const optional = createSourceRewrite<typeof source, { feature: string } | undefined>(source);
+		optional.render(0, 3, piece => {
+			if (typeof piece !== 'string') {
+				// @ts-expect-error the data may be undefined
+				const read = () => piece.data.feature;
+				expect(read).toThrow(TypeError);
+				expect(piece.data?.feature).toBeUndefined();
+			}
+		});
+		optional.cut(0, 1).render(() => {});
+
+		const none = createSourceRewrite(source);
+		// @ts-expect-error a rewrite without data takes none
+		none.render(0, 3, () => {}, { feature: 'x' });
+		// @ts-expect-error a rewrite without data takes none
+		none.cut(0, 1, { data: 'x' });
+		// @ts-expect-error a slice of other data is no code of the rewrite
+		expect(() => none.insertBefore(3, slice)).not.toThrow();
+		none.replace(1, 2, { source, start: 1, end: 2, text: 'B', name: 'b' });
 	});
 });
 
