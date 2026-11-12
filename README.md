@@ -105,6 +105,8 @@ The `placeholder` option renders where the cut was made. Kept text from a slice 
 
 Only `cut` creates a slice. Any other object you pass is a piece and is handed through as-is.
 
+To move a range up, use `insertAfter(to, slice)`. To move it down, use `insertBefore(to, slice)`. To move it to the very top or bottom, use `insertAfter(0, slice)` or `insertBefore(source.content.length, slice)`. A slice placed inside its own range can never render, because code inside the range moves with the slice. That includes `insertBefore` at its first character and `insertAfter` at its last one. Rendering then throws.
+
 ### Rendering and pieces
 
 `render(start, end, sink)` calls your sink function with each piece in order. A piece is either:
@@ -189,7 +191,8 @@ All offsets point into the original text, even after edits.
 | remove a range | `replace(start, end, '')` |
 | prepend or append | `insertAfter(0, code)` or `insertBefore(source.content.length, code)` |
 | insert at an offset | `insertBefore(offset, code)` or `insertAfter(offset, code)` |
-| move a range | `insertBefore(to, rewrite.cut(start, end))` |
+| move a range up | `insertAfter(to, rewrite.cut(start, end))` |
+| move a range down | `insertBefore(to, rewrite.cut(start, end))` |
 | read the result | `rewrite.render(0, source.content.length, piece => text += rewritePieceText(piece))` |
 | get a source map | `renderWithSourceMap` (see above) |
 | get decoded segments | `renderWithDecodedSourceMap` |
@@ -241,7 +244,7 @@ Common errors:
 - **Offset out of range** — offset is not within `0..content.length`
 - **Invalid rank** — rank is negative or not an integer
 - **Crossing cuts** — a cut overlaps another cut (cuts can nest but not cross)
-- **Cut placed inside itself** — a slice is placed within its own range (including `insertBefore` at its start)
+- **Cut placed inside itself** — a slice is placed within its own range (including `insertBefore` at its start and `insertAfter` at its end), or within a slice that it renders
 - **Editing while rendering** — you called an edit method from inside a `render` sink
 - **Content changed** — the source content was modified after creating the rewrite
 
