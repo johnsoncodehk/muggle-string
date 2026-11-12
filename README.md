@@ -181,6 +181,19 @@ Mapping rules:
 
 `renderWithDecodedSourceMap` gives you the decoded segments instead of the encoded `mappings` string. Use `encodeMappings` and `decodeMappings` to convert between formats.
 
+## Things that may surprise you
+
+These are choices, not bugs.
+
+- **Ranks order code for wrapping.** Before a character, the highest rank comes first; after it, the highest rank comes last. So a pair of inserts from a high rank encloses a pair from a low rank. The code before all text and the code after all text are such a pair around the whole text: with `insertAfter(0, code)` the highest rank comes first, although `insertAfter` at any other offset puts it last.
+- **One writer does not nest its own wraps.** A writer keeps call order on both sides, so wrapping `x` in `(` and `)` and then in `[` and `]` with one writer gives `([x)]`, not `[(x)]`. Give each nesting level its own rank.
+- **Removals add up and cannot be undone, and two replaces at one place both render.** No edit can cancel another, so edits of different writers can be made in any order.
+- **A view renders cut text only where its slice is placed.** The text of a cut belongs to its slice. `render(start, end, sink)` of a range inside a cut gives none of that text. At most it gives the placeholder of the cut, when the range starts where the cut starts. To get the text, render the slice, or a view that contains the place of the slice.
+- **A slice of a whole text leaves out the code at the top and bottom.** `cut(0, source.content.length)` takes the text and the code attached to its characters. Code from `insertAfter(0, code)` and `insertBefore(source.content.length, code)` is attached to no character. To put one rewrite into another, render it and insert the pieces: `inner.render(0, length, piece => outer.insertBefore(offset, piece));`
+- **Placing a slice at its own first or last character is an error.** `insertBefore(offset, code)` attaches code to the character at `offset`. If that character is the first one of the slice, the code is inside the slice. Giving this one case another meaning would make an insert depend on what it inserts. To place a slice right before or after its own range, use the other insert: `insertAfter(start, slice)` or `insertBefore(end, slice)`.
+- **Source maps tell sources apart by object.** Two source objects with the same name are two entries in `sources`. Pass the same object for the same file.
+- **When the last line of the text ends in new text, `mappings` has one more line than the text.** The map would otherwise end with a segment without a source, and Node's source map reader treats such a segment as mapped to the source position before it. The extra empty line avoids that.
+
 ## Coming from a mutable string editor
 
 All offsets point into the original text, even after edits.
