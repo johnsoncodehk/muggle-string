@@ -42,7 +42,11 @@ Every offset you pass — to `insertBefore`, `insertAfter`, `replace`, `cut`, or
 
 `insertBefore(offset, code)` attaches code to the character at that offset. `insertAfter(offset, code)` attaches to the character before it. When you move or render that character, the attached code moves with it.
 
+Two offsets have no character to attach to: `insertAfter(0, code)` puts code before all text, and `insertBefore(source.content.length, code)` puts code after all text. That code stays at the top and the bottom, whatever moves.
+
 An empty `replace(start, end, code)` where `start === end` inserts `code` at that position without removing anything.
+
+Code attached to a character still renders when `replace` removes that character. This is on purpose: it lets one plugin wrap a range that another plugin replaces.
 
 ### Writers and ranks
 
