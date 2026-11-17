@@ -699,7 +699,7 @@ describe('construction errors', () => {
 		expect(() => rewritePieceText({ source: {}, start: 0, end: 1 } as Parameters<typeof rewritePieceText>[0])).toThrow(
 			'The range 0..1 has no source.',
 		);
-		expect(rewritePieceText({ source, start: 0, end: 50, text: 'x' })).toBe('x');
+		expect(rewritePieceText({ source, start: 0, end: 3, text: 'x' })).toBe('x');
 		expect(rewritePieceText({ source, start: 3, end: 3 })).toBe('');
 	});
 
@@ -715,7 +715,7 @@ describe('construction errors', () => {
 			// @ts-expect-error a number is no code
 			[() => rewrite.replace(1, 2, [[false, 'x'], 5]), new TypeError(`replace(1, 2, code): code[0][0] is false, ${notCode}`)],
 			// @ts-expect-error a function is no code
-			[() => rewrite.insertBefore(0, () => 'x'), new TypeError(`insertBefore(0, code): code is a function without a start and an end, ${notCode}`)],
+			[() => rewrite.insertBefore(0, () => 'x'), new TypeError(`insertBefore(0, code): code is a function, ${notCode}`)],
 			[
 				() => rewrite.replace(0, 3, ['C', { source, start: 2, end: 4, data: 'range' }]),
 				new RangeError('replace(0, 3, code): code[1], the range 2..4, is out of 0..3.'),
@@ -740,13 +740,42 @@ describe('construction errors', () => {
 		expect(rewrite.unrendered()).toEqual([]);
 	});
 
-	test('an edit takes the ranges that rewritePieceText takes', () => {
+	test('an edit takes and refuses the ranges that rewritePieceText takes and refuses, with text or without', () => {
 		const rewrite = createRewrite(s, 'abc');
 		const source = rewrite.source;
-		rewrite.insertBefore(1, { source, start: 0, end: 50, data: 'range', text: 'X' });
-		rewrite.insertBefore(2, { start: 0, end: 1, data: 'range', text: 'Y' } as unknown as TestPiece);
-		rewrite.insertBefore(3, { source, start: 3, end: 3, data: 'range' });
-		expect(render(view(rewrite))).toBe('aXbYc');
+		const named = createSourceRewrite<TestSource, TestData & { name?: string }>(source);
+		named.insertBefore(1, { source, start: 0, end: 3, data: 'range', text: 'X', name: 'x' });
+		named.insertBefore(2, { source: otherSource, start: 4, end: 4, data: 'range', text: 'Y' });
+		named.insertBefore(3, { source, start: 3, end: 3, data: 'range', text: undefined, name: undefined });
+		const texts: string[] = [];
+		named.render(0, 3, piece => texts.push(rewritePieceText(piece)), { data: 'v' });
+		expect(texts.join('')).toBe('aXbYc');
+		const bad = [
+			{ source, start: 0, end: 50, text: 'x' },
+			{ source, start: -1, end: 1, text: '' },
+			{ start: 0, end: 1, text: 'x' },
+			{ source: null, start: 0, end: 1, text: 'x' },
+			{ source, start: 0, end: 1, text: null },
+			{ source, start: 0, end: 1, text: 5 },
+			{ source, start: 0, end: 1, text: 'x', name: null },
+			{ source, start: 0, end: 1, name: 5 },
+		] as unknown as TestPiece[];
+		rewrite.insertBefore(1, 'X');
+		for (const range of bad) {
+			const problem = (() => {
+				try {
+					rewritePieceText(range);
+				}
+				catch (error) {
+					return (error as Error).message.replace(/^The range (\S+) /, 'the range $1, ');
+				}
+			})();
+			expect(problem).toBeDefined();
+			expect(() => rewrite.replace(1, 2, ['x', { ...range as object, data: 'range' } as TestPiece])).toThrow(
+				`replace(1, 2, code): code[1], ${problem}`,
+			);
+		}
+		expect(render(view(rewrite))).toBe('aXbc');
 	});
 
 	test('code is read when it is written: a later change of its array or of a placeholder array changes no render', () => {

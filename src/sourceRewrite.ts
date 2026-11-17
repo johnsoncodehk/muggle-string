@@ -1,4 +1,4 @@
-import { describe, isRange, rangeProblem, type UncheckedRange } from './piece.js';
+import { describe, isRange, notPiece, rangeProblem, type UncheckedRange } from './piece.js';
 import type { Piece, Source } from './types.js';
 
 // `Symbol.for`, as a cut of another copy of the package, such as its CommonJS build, is a slice too
@@ -146,20 +146,25 @@ export function createSourceRewrite<
 type Sink<S extends Source, Data> = (piece: Piece<RewriteOrigin<S, Data>>) => void;
 
 /**
- * The generated text of `piece`: new text, the `text` of a range, or the content of its source that it keeps. A kept
- * range without a source, or whose `start` and `end` are not integers with 0 <= `start` <= `end` <= the length of the
- * content, throws. `renderWithSourceMap` and `renderWithDecodedSourceMap` read a range the same way, and the edits of
- * a rewrite refuse the ranges that it refuses.
+ * The generated text of `piece`: new text, the `text` of a range, or the content of its source that it keeps. A range
+ * without a source, whose `start` and `end` are not integers with 0 <= `start` <= `end` <= the length of the content,
+ * or whose `text` or `name` is neither undefined nor a string, throws, with `text` or without. `renderWithSourceMap`
+ * and `renderWithDecodedSourceMap` take the same pieces, by the same check, and the edits of a rewrite refuse the
+ * ranges that it refuses.
  */
 export function rewritePieceText(piece: Piece<{ source: Source }>): string {
 	if (typeof piece === 'string') {
 		return piece;
 	}
+	if (typeof piece !== 'object' || piece === null) {
+		throw notPiece(piece);
+	}
 	const problem = rangeProblem(piece);
 	if (problem) {
 		throw new problem[0](`The range ${piece.start}..${piece.end} ${problem[1]}.`);
 	}
-	return piece.text ?? piece.source.content.slice(piece.start, piece.end);
+	const { text } = piece;
+	return text === undefined ? piece.source.content.slice(piece.start, piece.end) : text;
 }
 
 const coreRank = 0x7fffffff;
@@ -1009,7 +1014,7 @@ function flatten(code: readonly unknown[], flat: unknown[]): CodeProblem | undef
 
 /** What is wrong with `value`, which is neither a string nor an array, as code: it is no slice, and no range that the renders take. */
 function valueProblem(value: unknown): CodeProblem | undefined {
-	if (value === null || (typeof value !== 'object' && typeof value !== 'function')) {
+	if (typeof value !== 'object' || value === null) {
 		return notCode(describe(value));
 	}
 	if ((value as Partial<RewriteSlice<Source>>)[sliceBrand] === true) {

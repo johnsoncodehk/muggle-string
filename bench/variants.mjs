@@ -298,8 +298,12 @@ export const variants = [
 			},
 			{
 				file: 'sourceRewrite.ts',
-				find: `	return piece.text ?? piece.source.content.slice(piece.start, piece.end);`,
-				replace: `	return piece.text ?? (piece as { copy?: string }).copy ?? piece.source.content.slice(piece.start, piece.end);`,
+				find: `	return text === undefined ? piece.source.content.slice(piece.start, piece.end) : text;`,
+				replace: `	if (text !== undefined) {
+		return text;
+	}
+	const { copy } = piece as { copy?: string };
+	return copy !== undefined ? copy : piece.source.content.slice(piece.start, piece.end);`,
 			},
 			{
 				file: 'sourceMap.ts',

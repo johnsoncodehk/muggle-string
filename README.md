@@ -123,6 +123,8 @@ An array is read when you pass it, so changing it later does not change the rewr
 - A range without `text` — kept source text from `start` to `end`
 - A range with `text` — generated text that maps back to the source range
 
+A range, with `text` or without, must be an integer range within its source's `content`, and its `text` and `name` must be strings when present. `rewritePieceText`, the edits and the source map renders throw for any other piece.
+
 Whether to join pieces into a string is your choice. `rewritePieceText(piece)` extracts the text from any piece.
 
 Views can overlap. You can render the same range multiple times, or render several ranges that cover the same source positions.
@@ -185,7 +187,6 @@ console.log(JSON.stringify(map));
 Mapping rules:
 - Kept text maps at token boundaries (line starts, word starts, whitespace runs, individual punctuation)
 - Generated text (ranges with `text`) maps to the start of the source range
-- Generated text of a range that is not a range of its source maps to nothing, like a new string
 - New strings map to nothing
 
 `renderWithDecodedSourceMap` gives you the decoded segments instead of the encoded `mappings` string. Use `encodeMappings` and `decodeMappings` to convert between formats.
@@ -267,7 +268,7 @@ Common errors:
 
 - **Offset out of range** — offset is not within `0..content.length`
 - **Invalid rank** — rank is negative or not an integer
-- **Invalid code** — a value that is not a string, a range, a slice or an array of them, or a range that cannot render; thrown by the edit or `cut` that passes it
+- **Invalid code** — a value that is not a string, a range, a slice or an array of them, or a range that is out of its source or whose `text` or `name` is not a string; thrown by the edit or `cut` that passes it
 - **Crossing cuts** — a cut overlaps another cut (cuts can nest but not cross)
 - **Cut placed inside itself** — a slice is placed within its own range (including `insertBefore` at its start and `insertAfter` at its end), or within a slice that it renders; thrown by the edit or `cut` that places it
 - **Editing while rendering** — you called an edit method from inside a `render` sink
