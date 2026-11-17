@@ -838,16 +838,13 @@ function mergeEdits<S extends Source, Data>(
 
 /** The slices in `code` as a rewrite holds it whose places are recorded, if any. */
 function slicesOf<S extends Source, Data>(code: RewriteCode<S, Data>): PlacedSlice[] | undefined {
-	if (typeof code === 'string') {
-		return undefined;
-	}
 	if (!isCodeArray<S, Data>(code)) {
 		return isPlaced<S, Data>(code) ? [code] : undefined;
 	}
 	let slices: PlacedSlice[] | undefined;
 	for (let index = 0; index < code.length; index++) {
 		const value = code[index]!;
-		if (typeof value !== 'string' && isPlaced(value)) {
+		if (isPlaced(value)) {
 			(slices ??= []).push(value);
 		}
 	}
@@ -874,9 +871,6 @@ function addRenderer(slices: PlacedSlice[], renderer: () => PlacedSlice | undefi
 function renders(slice: PlacedSlice, owner: PlacedSlice) {
 	if (slice === owner) {
 		return true;
-	}
-	if (!owner[placesKey].renderers) {
-		return false;
 	}
 	const seen = new Set([owner]);
 	const walk = [owner];
@@ -1026,7 +1020,7 @@ function renderCode<S extends Source, Data>(code: RewriteCode<S, Data>, sink: (p
 	else if (isCodeArray<S, Data>(code)) {
 		for (let index = 0; index < code.length; index++) {
 			const value = code[index]!;
-			if (typeof value !== 'string' && isSlice<S, Data>(value)) {
+			if (isSlice<S, Data>(value)) {
 				value.render(sink);
 			}
 			else {
