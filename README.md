@@ -105,7 +105,9 @@ The `placeholder` option renders where the cut was made. Kept text from a slice 
 
 Only `cut` creates a slice. A range you pass is handed through as-is.
 
-To move a range up, use `insertAfter(to, slice)`. To move it down, use `insertBefore(to, slice)`. To move it to the very top or bottom, use `insertAfter(0, slice)` or `insertBefore(source.content.length, slice)`. A slice placed inside its own range can never render, because code inside the range moves with the slice. That includes `insertBefore` at its first character and `insertAfter` at its last one. Rendering then throws.
+`unrendered()` lists the slices that no view will render: slices placed nowhere, or only inside another slice that is itself placed nowhere. It looks at where slices are placed, not at what has rendered, so a render does not change it. Rendering a slice yourself with `slice.render(sink)` does not place it.
+
+To move a range up, use `insertAfter(to, slice)`. To move it down, use `insertBefore(to, slice)`. To move it to the very top or bottom, use `insertAfter(0, slice)` or `insertBefore(source.content.length, slice)`. A slice cannot be placed inside its own range, because code inside the range moves with the slice. That includes `insertBefore` at its first character and `insertAfter` at its last one. Such an edit throws right away, and so does a `cut` whose placeholder places a slice inside itself.
 
 ### Code is checked when you write it
 
@@ -197,7 +199,8 @@ These are choices, not bugs.
 - **Removals add up and cannot be undone, and two replaces at one place both render.** No edit can cancel another, so edits of different writers can be made in any order.
 - **A view renders cut text only where its slice is placed.** The text of a cut belongs to its slice. `render(start, end, sink)` of a range inside a cut gives none of that text. At most it gives the placeholder of the cut, when the range starts where the cut starts. To get the text, render the slice, or a view that contains the place of the slice.
 - **A slice of a whole text leaves out the code at the top and bottom.** `cut(0, source.content.length)` takes the text and the code attached to its characters. Code from `insertAfter(0, code)` and `insertBefore(source.content.length, code)` is attached to no character. To put one rewrite into another, render it and insert the pieces: `inner.render(0, length, piece => outer.insertBefore(offset, piece));`
-- **Placing a slice at its own first or last character is an error.** `insertBefore(offset, code)` attaches code to the character at `offset`. If that character is the first one of the slice, the code is inside the slice. Giving this one case another meaning would make an insert depend on what it inserts. To place a slice right before or after its own range, use the other insert: `insertAfter(start, slice)` or `insertBefore(end, slice)`.
+- **Placing a slice at its own first or last character is an error.** `insertBefore(offset, code)` attaches code to the character at `offset`. If that character is the first one of the slice, the code is inside the slice. Giving this one case another meaning would make an insert depend on what it inserts. To place a slice right before or after its own range, use the other insert: `insertAfter(start, slice)` or `insertBefore(end, slice)`. The error message names that insert.
+- **`unrendered()` does not count renders.** A slice that you render yourself and place nowhere is still listed. A slice placed in another rewrite counts as placed, unless that rewrite comes from muggle-string 1.0.4 or older, which records no places.
 - **Source maps tell sources apart by object.** Two source objects with the same name are two entries in `sources`. Pass the same object for the same file.
 - **When the last line of the text ends in new text, `mappings` has one more line than the text.** The map would otherwise end with a segment without a source, and Node's source map reader treats such a segment as mapped to the source position before it. The extra empty line avoids that.
 
@@ -229,7 +232,7 @@ All offsets point into the original text, even after edits.
 - `replace(start, end, code)` — remove the range and insert `code` in its place
 - `cut(start, end, options?)` — remove a range and return a slice you can place elsewhere
   - `options.placeholder` — code that renders where the cut was made
-- `unrendered()` — list slices that haven't been rendered yet
+- `unrendered()` — list the slices that are placed nowhere a view can reach
 
 ### Rendering
 
@@ -266,7 +269,7 @@ Common errors:
 - **Invalid rank** — rank is negative or not an integer
 - **Invalid code** — a value that is not a string, a range, a slice or an array of them, or a range that cannot render; thrown by the edit or `cut` that passes it
 - **Crossing cuts** — a cut overlaps another cut (cuts can nest but not cross)
-- **Cut placed inside itself** — a slice is placed within its own range (including `insertBefore` at its start and `insertAfter` at its end), or within a slice that it renders
+- **Cut placed inside itself** — a slice is placed within its own range (including `insertBefore` at its start and `insertAfter` at its end), or within a slice that it renders; thrown by the edit or `cut` that places it
 - **Editing while rendering** — you called an edit method from inside a `render` sink
 - **Content changed** — the source content was modified after creating the rewrite
 

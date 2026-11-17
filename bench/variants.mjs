@@ -180,8 +180,8 @@ export const variants = [
 			},
 			{
 				file: 'sourceRewrite.ts',
-				find: `): [Int32Array, RewriteCode<S, Data>[], Int32Array[]?] {`,
-				replace: `): [ArrayLike<number>, RewriteCode<S, Data>[], Int32Array[]?] {`,
+				find: `): [Int32Array, RewriteCode<S, Data>[]] {`,
+				replace: `): [ArrayLike<number>, RewriteCode<S, Data>[]] {`,
 			},
 			{
 				file: 'sourceRewrite.ts',
@@ -211,7 +211,7 @@ export const variants = [
 				find: /^function mergeEdits<S extends Source, Data>\([\s\S]*?^}\n/m,
 				replace: `function mergeEdits<S extends Source, Data>(
 	writers: Edits<S, Data>[],
-): [Int32Array, RewriteCode<S, Data>[], Int32Array[]?] {
+): [Int32Array, RewriteCode<S, Data>[]] {
 	const order: [number, number][] = [];
 	for (let writer = 0; writer < writers.length; writer++) {
 		for (let index = 0; index < writers[writer]!.code.length; index++) {
@@ -233,14 +233,12 @@ export const variants = [
 	});
 	const keys = new Int32Array(order.length);
 	const merged: RewriteCode<S, Data>[] = [];
-	const positions = writers.map(edits => new Int32Array(edits.code.length));
 	for (let at = 0; at < order.length; at++) {
 		const [writer, index] = order[at]!;
 		keys[at] = writers[writer]!.keys[index]!;
 		merged.push(writers[writer]!.code[index]!);
-		positions[writer]![index] = at;
 	}
-	return [keys, merged, positions];
+	return [keys, merged];
 }
 `,
 			},
