@@ -294,7 +294,7 @@ describe('scenarios', () => {
 		expect(render(view(rewrite))).toBe('axyzb');
 	});
 
-	test('only cut makes a slice: any other object in code is a piece, passed on as it is', () => {
+	test('only cut makes a slice: any other object in code is a piece, which the edit refuses unless it is a range', () => {
 		const rewrite = createRewrite(s, 'ab');
 		const renders = {
 			render() {
@@ -302,8 +302,12 @@ describe('scenarios', () => {
 			},
 		};
 		// @ts-expect-error only cut makes a slice
-		rewrite.insertAfter(1, renders);
-		expect(renderPieces(view(rewrite))[1]).toBe(renders);
+		expect(() => rewrite.insertAfter(1, renders)).toThrow(
+			new TypeError(
+				'insertAfter(1, code): code is an object without a start and an end, which is not code: a string, a range, a slice or an array of them.',
+			),
+		);
+		expect(collect(view(rewrite))).toEqual([{ source: s, start: 0, end: 2, data: 'body' }]);
 	});
 
 	test('a range is a piece whatever fields it carries', () => {
@@ -532,9 +536,7 @@ describe('construction errors', () => {
 
 		const inOwnPlaceholder = createRewrite(s, 'abcdef');
 		const outer = inOwnPlaceholder.cut(1, 5, { data: 'outer' });
-		const placeholder: RewriteCode<TestSource, TestData>[] = [];
-		inOwnPlaceholder.cut(2, 3, { data: 'inner', placeholder });
-		placeholder.push(outer);
+		inOwnPlaceholder.cut(2, 3, { data: 'inner', placeholder: ['(', outer, ')'] });
 		expect(() => collect(outer)).toThrow('The cut 1..5 is placed inside itself');
 
 		const inEachOther = createRewrite(s, 'abcdef');
@@ -634,6 +636,84 @@ describe('construction errors', () => {
 		);
 		expect(rewritePieceText({ source, start: 0, end: 50, text: 'x' })).toBe('x');
 		expect(rewritePieceText({ source, start: 3, end: 3 })).toBe('');
+	});
+
+	test('code that no render takes is an error of the edit that writes it, which then changes nothing', () => {
+		const rewrite = createRewrite(s, 'abc');
+		const source = rewrite.source;
+		const notCode = 'which is not code: a string, a range, a slice or an array of them.';
+		const writes: [() => void, Error][] = [
+			// @ts-expect-error undefined is no code
+			[() => rewrite.insertBefore(1, undefined), new TypeError(`insertBefore(1, code): code is undefined, ${notCode}`)],
+			// @ts-expect-error null is no code
+			[() => rewrite.insertAfter(1, ['x', null]), new TypeError(`insertAfter(1, code): code[1] is null, ${notCode}`)],
+			// @ts-expect-error a number is no code
+			[() => rewrite.replace(1, 2, [[false, 'x'], 5]), new TypeError(`replace(1, 2, code): code[0][0] is false, ${notCode}`)],
+			// @ts-expect-error a function is no code
+			[() => rewrite.insertBefore(0, () => 'x'), new TypeError(`insertBefore(0, code): code is a function without a start and an end, ${notCode}`)],
+			[
+				() => rewrite.replace(0, 3, ['C', { source, start: 2, end: 4, data: 'range' }]),
+				new RangeError('replace(0, 3, code): code[1], the range 2..4, is out of 0..3.'),
+			],
+			[
+				() => rewrite.replace(1, 1, [[{ start: 0, end: 1, data: 'range' } as unknown as TestPiece]]),
+				new TypeError('replace(1, 1, code): code[0][0], the range 0..1, has no source.'),
+			],
+			[
+				// @ts-expect-error a number is no code
+				() => rewrite.cut(1, 2, { data: 'cut', placeholder: ['<', 0] }),
+				new TypeError(`cut(1, 2, options): the placeholder[1] is 0, ${notCode}`),
+			],
+		];
+		for (const [write, error] of writes) {
+			expect(write).toThrow(error);
+		}
+		const holdsItself: RewriteCode<TestSource, TestData>[] = ['x'];
+		holdsItself.push(holdsItself);
+		expect(() => rewrite.insertBefore(1, holdsItself)).toThrow(RangeError);
+		expect(collect(view(rewrite))).toEqual([{ source: s, start: 0, end: 3, data: 'body' }]);
+		expect(rewrite.unrendered()).toEqual([]);
+	});
+
+	test('an edit takes the ranges that rewritePieceText takes', () => {
+		const rewrite = createRewrite(s, 'abc');
+		const source = rewrite.source;
+		rewrite.insertBefore(1, { source, start: 0, end: 50, data: 'range', text: 'X' });
+		rewrite.insertBefore(2, { start: 0, end: 1, data: 'range', text: 'Y' } as unknown as TestPiece);
+		rewrite.insertBefore(3, { source, start: 3, end: 3, data: 'range' });
+		expect(render(view(rewrite))).toBe('aXbYc');
+	});
+
+	test('code is read when it is written: a later change of its array or of a placeholder array changes no render', () => {
+		const rewrite = createRewrite(s, 'abcdef');
+		const code: RewriteCode<TestSource, TestData>[] = ['<', ['', '>']];
+		rewrite.insertBefore(0, code);
+		code.push('!');
+		(code[1] as RewriteCode<TestSource, TestData>[]).length = 0;
+		const placeholder: RewriteCode<TestSource, TestData>[] = ['(', ')'];
+		const slice = rewrite.cut(2, 4, { data: 'cut', placeholder });
+		placeholder.splice(1, 0, slice);
+		expect(render(view(rewrite))).toBe('<>ab()ef');
+		expect(render(slice)).toBe('cd');
+	});
+
+	test('empty code is code: an edit of it checks its offsets, removes its range and splits the text as an edit does', () => {
+		for (const empty of ['', [], ['', ['']]] as RewriteCode<TestSource, TestData>[]) {
+			const rewrite = createRewrite(s, 'abcdef');
+			rewrite.replace(1, 3, empty);
+			rewrite.insertBefore(4, empty);
+			rewrite.writer(0).insertAfter(5, empty);
+			expect(() => rewrite.insertBefore(7, empty)).toThrow('The offset 7 is out of 0..6.');
+			expect(() => rewrite.render(0, 6, () => rewrite.replace(0, 1, empty), { data: 'v' })).toThrow(
+				'The rewrite is rendering.',
+			);
+			expect(collect(view(rewrite))).toEqual([
+				{ source: s, start: 0, end: 1, data: 'body' },
+				{ source: s, start: 3, end: 4, data: 'body' },
+				{ source: s, start: 4, end: 5, data: 'body' },
+				{ source: s, start: 5, end: 6, data: 'body' },
+			]);
+		}
 	});
 
 	test('offsets out of the text and an invalid rank are errors', () => {
@@ -830,7 +910,8 @@ interface NestedCut {
 	start: number;
 	end: number;
 	id: number;
-	inPlace: boolean;
+	/** Whether it is placed after all text, as a cut whose parent owns no char is; else at `place`. */
+	atEnd: boolean;
 	place?: { at: number; after: boolean };
 }
 
@@ -842,7 +923,7 @@ interface NestedEdit {
 	tag: string;
 }
 
-/** Random edits and a random family of nested or disjoint cuts, each placed in place or at a char of its parent. */
+/** Random edits and a random family of nested or disjoint cuts, each placed after all text or at a char of its parent. */
 function createNestedCase(random: (below: number) => number, length: number) {
 	const cuts: NestedCut[] = [];
 	const grow = (start: number, end: number, depth: number) => {
@@ -859,9 +940,9 @@ function createNestedCase(random: (below: number) => number, length: number) {
 			) {
 				continue;
 			}
-			cuts.push({ start: a, end: b, id: cuts.length, inPlace: random(3) === 0 });
+			cuts.push({ start: a, end: b, id: cuts.length, atEnd: random(3) === 0 });
 			if (random(4) === 0) {
-				cuts.push({ start: a, end: b, id: cuts.length, inPlace: random(2) === 0 });
+				cuts.push({ start: a, end: b, id: cuts.length, atEnd: random(2) === 0 });
 			}
 			grow(a, b, depth + 1);
 		}
@@ -897,7 +978,7 @@ function createNestedCase(random: (below: number) => number, length: number) {
 				free.push(index);
 			}
 		}
-		if (!cut.inPlace && free.length) {
+		if (!cut.atEnd && free.length) {
 			cut.place = { at: free[random(free.length)]!, after: !!random(2) };
 		}
 	}
@@ -930,21 +1011,19 @@ function buildNestedCase(
 		.map(({ cut }) => cut);
 	const ofRange = (cut: NestedCut) => order.filter(other => other.start === cut.start && other.end === cut.end);
 	for (const cut of order.map(cut => ofRange(cut).sort((a, b) => a.id - b.id)[ofRange(cut).indexOf(cut)]!)) {
-		// a cut not placed elsewhere renders in its own placeholder, which code reads when it renders
-		const inPlace: RewriteCode<TestSource, TestData>[] = [];
-		const placeholder = cut.place ? `<P${cut.id}>` : inPlace;
-		slices[cut.id] = rewrite.cut(cut.start, cut.end, { data: `cut${cut.id}`, placeholder });
-		inPlace.push('<', slices[cut.id]!, '>');
+		slices[cut.id] = rewrite.cut(cut.start, cut.end, { data: `cut${cut.id}`, placeholder: `<P${cut.id}>` });
 	}
 	for (const cut of cuts) {
-		if (cut.place) {
-			const code = ['{', slices[cut.id]!, '}'];
-			if (cut.place.after) {
-				rewrite.insertAfter(cut.place.at + 1, code);
-			}
-			else {
-				rewrite.insertBefore(cut.place.at, code);
-			}
+		const code = ['{', slices[cut.id]!, '}'];
+		if (!cut.place) {
+			// by the innermost writer, before its edits: inside the code that the edits put after all text
+			rewrite.writer(0).insertBefore(rewrite.source.content.length, code);
+		}
+		else if (cut.place.after) {
+			rewrite.insertAfter(cut.place.at + 1, code);
+		}
+		else {
+			rewrite.insertBefore(cut.place.at, code);
 		}
 	}
 	for (const edit of edits) {

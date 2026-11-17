@@ -300,18 +300,8 @@ export const variants = [
 			},
 			{
 				file: 'sourceRewrite.ts',
-				find: `	const { text } = piece;
-	if (text != null) {
-		return text;
-	}`,
-				replace: `	const { text } = piece;
-	if (text != null) {
-		return text;
-	}
-	const { copy } = piece as { copy?: string };
-	if (copy !== undefined) {
-		return copy;
-	}`,
+				find: `	return piece.text ?? piece.source.content.slice(piece.start, piece.end);`,
+				replace: `	return piece.text ?? (piece as { copy?: string }).copy ?? piece.source.content.slice(piece.start, piece.end);`,
 			},
 			{
 				file: 'sourceMap.ts',

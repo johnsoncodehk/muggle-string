@@ -103,9 +103,15 @@ console.log(rewrite.unrendered().length);
 
 The `placeholder` option renders where the cut was made. Kept text from a slice carries the data you pass to `cut`.
 
-Only `cut` creates a slice. Any other object you pass is a piece and is handed through as-is.
+Only `cut` creates a slice. A range you pass is handed through as-is.
 
 To move a range up, use `insertAfter(to, slice)`. To move it down, use `insertBefore(to, slice)`. To move it to the very top or bottom, use `insertAfter(0, slice)` or `insertBefore(source.content.length, slice)`. A slice placed inside its own range can never render, because code inside the range moves with the slice. That includes `insertBefore` at its first character and `insertAfter` at its last one. Rendering then throws.
+
+### Code is checked when you write it
+
+`insertBefore`, `insertAfter`, `replace` and the `placeholder` of `cut` take code: a string, a range, a slice, or an array of these. Anything else, and any range that `rewritePieceText` would reject, throws in the call that passes it. The message names the call and the place in the code, such as `replace(2, 3, code): code[1], the range 2..9, is out of 0..3.` An edit that throws changes nothing.
+
+An array is read when you pass it, so changing it later does not change the rewrite. A range is not copied: the sink gets the same object.
 
 ### Rendering and pieces
 
@@ -258,6 +264,7 @@ Common errors:
 
 - **Offset out of range** — offset is not within `0..content.length`
 - **Invalid rank** — rank is negative or not an integer
+- **Invalid code** — a value that is not a string, a range, a slice or an array of them, or a range that cannot render; thrown by the edit or `cut` that passes it
 - **Crossing cuts** — a cut overlaps another cut (cuts can nest but not cross)
 - **Cut placed inside itself** — a slice is placed within its own range (including `insertBefore` at its start and `insertAfter` at its end), or within a slice that it renders
 - **Editing while rendering** — you called an edit method from inside a `render` sink
