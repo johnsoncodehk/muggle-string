@@ -111,7 +111,7 @@ To move a range up, use `insertAfter(to, slice)`. To move it down, use `insertBe
 
 ### Code is checked when you write it
 
-`insertBefore`, `insertAfter`, `replace` and the `placeholder` of `cut` take code: a string, a range, a slice, or an array of these. Anything else, and any range that `rewritePieceText` would reject, throws in the call that passes it. The message names the call and the place in the code, such as `replace(2, 3, code): code[1], the range 2..9, is out of 0..3.` An edit that throws changes nothing.
+`insertBefore`, `insertAfter`, `replace` and the `placeholder` of `cut` take code: a string, a range, a slice, or an array of these. A range that `rewritePieceText` would reject throws in the call that passes it. The message names the call and the place in the code, such as `replace(2, 3, code): code[1], the range 2..9, is out of 0..3.` An edit that throws changes nothing.
 
 An array is read when you pass it, so changing it later does not change the rewrite. A range is not copied: the sink gets the same object.
 
@@ -123,7 +123,7 @@ An array is read when you pass it, so changing it later does not change the rewr
 - A range without `text` — kept source text from `start` to `end`
 - A range with `text` — generated text that maps back to the source range
 
-A range, with `text` or without, must be an integer range within its source's `content`, and its `text` and `name` must be strings when present. `rewritePieceText`, the edits and the source map renders throw for any other piece.
+A range, with `text` or without, must be an integer range within its source's `content`. `rewritePieceText`, the edits and the source map renders throw a `RangeError` for any other range.
 
 Whether to join pieces into a string is your choice. `rewritePieceText(piece)` extracts the text from any piece.
 
@@ -268,7 +268,7 @@ Common errors:
 
 - **Offset out of range** — offset is not within `0..content.length`
 - **Invalid rank** — rank is negative or not an integer
-- **Invalid code** — a value that is not a string, a range, a slice or an array of them, or a range that is out of its source or whose `text` or `name` is not a string; thrown by the edit or `cut` that passes it
+- **Range out of its source** — a range that is not an integer range within its source's `content`, with `text` or without; thrown by the edit or `cut` that passes it, `rewritePieceText` and the source map renders
 - **Crossing cuts** — a cut overlaps another cut (cuts can nest but not cross)
 - **Cut placed inside itself** — a slice is placed within its own range (including `insertBefore` at its start and `insertAfter` at its end), or within a slice that it renders; thrown by the edit or `cut` that places it
 - **Editing while rendering** — you called an edit method from inside a `render` sink

@@ -1,4 +1,4 @@
-import { noSource, notPiece, rangeProblem } from './piece.js';
+import { isRange } from './piece.js';
 import type { Piece, Source } from './types.js';
 
 /** A source map of generated text to its sources, in the v3 format. */
@@ -72,9 +72,9 @@ const enum CharClass {
  * text starts with, as of a symbol that `text` renames; it goes in `names`, for the first segment of the range on a
  * char. Kept text is its own name, so the `name` of a range without `text` goes nowhere.
  *
- * It takes the pieces that `rewritePieceText` takes, by the same check: a range without a source, an object with a
- * string `content`, whose `start` and `end` are not integers with 0 <= `start` <= `end` <= the length of the content,
- * or whose `text` or `name` is neither undefined nor a string, throws when it reaches the sink.
+ * It takes the ranges that `rewritePieceText` takes, by the same check: a range whose `start` and `end` are not
+ * integers with 0 <= `start` <= `end` <= the length of the content of its source, with `text` or without, throws when
+ * it reaches the sink.
  */
 export function renderWithSourceMap<S extends Source>(
 	render: (sink: (piece: Piece<{ source: S; name?: string }>) => void) => void,
@@ -323,22 +323,16 @@ function renderWith<S extends Source, Mappings>(
 			unmapped(piece);
 			return;
 		}
-		if (typeof piece !== 'object' || piece === null) {
-			throw notPiece(piece);
-		}
-		const problem = rangeProblem(piece);
-		// a range has a source unless the check says that it has none
-		const source = piece.source as S;
-		if (problem) {
-			const of = problem === noSource ? '' : ` of ${sourceName(source)}`;
-			throw new problem[0](`The range ${piece.start}..${piece.end}${of} ${problem[1]}.`);
+		const { source, start, end } = piece;
+		const { content } = source;
+		if (!isRange(start, end, content.length)) {
+			throw new RangeError(`The range ${start}..${end} of ${sourceName(source)} is out of 0..${content.length}.`);
 		}
 		let known = source === lastSource ? lastKnown : sources.get(source);
-		known ??= addSource(source, source.content);
+		known ??= addSource(source, content);
 		lastSource = source;
 		lastKnown = known;
 		const { index, lineStarts } = known;
-		const { start } = piece;
 		const generated = piece.text;
 		pieceName = generated === undefined ? undefined : piece.name;
 		// pieces mostly go on from the end of the last range of their source, on its line or the next
@@ -366,7 +360,6 @@ function renderWith<S extends Source, Mappings>(
 		known.line = line;
 		let sourceColumn = start - lineStarts[line]!;
 		if (generated === undefined) {
-			const { content } = source;
 			const classes = asciiClasses ??= createAsciiClasses();
 			let previous = -1;
 			for (let offset = piece.start; offset < piece.end; offset++) {

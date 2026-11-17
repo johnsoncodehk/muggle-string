@@ -294,22 +294,6 @@ describe('scenarios', () => {
 		expect(render(view(rewrite))).toBe('axyzb');
 	});
 
-	test('only cut makes a slice: any other object in code is a piece, which the edit refuses unless it is a range', () => {
-		const rewrite = createRewrite(s, 'ab');
-		const renders = {
-			render() {
-				throw new Error('Only a cut renders.');
-			},
-		};
-		// @ts-expect-error only cut makes a slice
-		expect(() => rewrite.insertAfter(1, renders)).toThrow(
-			new TypeError(
-				'insertAfter(1, code): code is an object without a start and an end, which is not code: a string, a range, a slice or an array of them.',
-			),
-		);
-		expect(collect(view(rewrite))).toEqual([{ source: s, start: 0, end: 2, data: 'body' }]);
-	});
-
 	test('a range is a piece whatever fields it carries', () => {
 		const rewrite = createRewrite(s, 'abc');
 		const range = {
@@ -686,48 +670,36 @@ describe('construction errors', () => {
 		expect(render(view(rewrite, 'v', 1, 2))).toBe('BbRbET');
 	});
 
-	test('the text of a kept range that is not an integer range of the content of its source, or has no source, is an error', () => {
+	test('the text of a kept range that is not an integer range of the content of its source is an error', () => {
 		const source = { content: 'abc' };
 		for (const [start, end] of [[-1, 2], [1.5, 2], [3, 2], [0, 4], [Number.NaN, 2]]) {
 			expect(() => rewritePieceText({ source, start: start!, end: end! })).toThrow(
 				`The range ${start}..${end} is out of 0..3.`,
 			);
 		}
-		expect(() => rewritePieceText({ start: 0, end: 1 } as Parameters<typeof rewritePieceText>[0])).toThrow(
-			'The range 0..1 has no source.',
-		);
-		expect(() => rewritePieceText({ source: {}, start: 0, end: 1 } as Parameters<typeof rewritePieceText>[0])).toThrow(
-			'The range 0..1 has no source.',
-		);
 		expect(rewritePieceText({ source, start: 0, end: 3, text: 'x' })).toBe('x');
 		expect(rewritePieceText({ source, start: 3, end: 3 })).toBe('');
 	});
 
-	test('code that no render takes is an error of the edit that writes it, which then changes nothing', () => {
+	test('a range that no render takes is an error of the edit that writes it, which then changes nothing', () => {
 		const rewrite = createRewrite(s, 'abc');
 		const source = rewrite.source;
-		const notCode = 'which is not code: a string, a range, a slice or an array of them.';
 		const writes: [() => void, Error][] = [
-			// @ts-expect-error undefined is no code
-			[() => rewrite.insertBefore(1, undefined), new TypeError(`insertBefore(1, code): code is undefined, ${notCode}`)],
-			// @ts-expect-error null is no code
-			[() => rewrite.insertAfter(1, ['x', null]), new TypeError(`insertAfter(1, code): code[1] is null, ${notCode}`)],
-			// @ts-expect-error a number is no code
-			[() => rewrite.replace(1, 2, [[false, 'x'], 5]), new TypeError(`replace(1, 2, code): code[0][0] is false, ${notCode}`)],
-			// @ts-expect-error a function is no code
-			[() => rewrite.insertBefore(0, () => 'x'), new TypeError(`insertBefore(0, code): code is a function, ${notCode}`)],
+			[
+				() => rewrite.insertBefore(1, { source, start: 0, end: 4, data: 'range' }),
+				new RangeError('insertBefore(1, code): code, the range 0..4, is out of 0..3.'),
+			],
 			[
 				() => rewrite.replace(0, 3, ['C', { source, start: 2, end: 4, data: 'range' }]),
 				new RangeError('replace(0, 3, code): code[1], the range 2..4, is out of 0..3.'),
 			],
 			[
-				() => rewrite.replace(1, 1, [[{ start: 0, end: 1, data: 'range' } as unknown as TestPiece]]),
-				new TypeError('replace(1, 1, code): code[0][0], the range 0..1, has no source.'),
+				() => rewrite.insertAfter(1, [['x', { source, start: 0.5, end: 1, data: 'range', text: 'y' }]]),
+				new RangeError('insertAfter(1, code): code[0][1], the range 0.5..1, is out of 0..3.'),
 			],
 			[
-				// @ts-expect-error a number is no code
-				() => rewrite.cut(1, 2, { data: 'cut', placeholder: ['<', 0] }),
-				new TypeError(`cut(1, 2, options): the placeholder[1] is 0, ${notCode}`),
+				() => rewrite.cut(1, 2, { data: 'cut', placeholder: ['<', { source, start: 3, end: 2, data: 'range' }] }),
+				new RangeError('cut(1, 2, options): the placeholder[1], the range 3..2, is out of 0..3.'),
 			],
 		];
 		for (const [write, error] of writes) {
@@ -750,16 +722,13 @@ describe('construction errors', () => {
 		const texts: string[] = [];
 		named.render(0, 3, piece => texts.push(rewritePieceText(piece)), { data: 'v' });
 		expect(texts.join('')).toBe('aXbYc');
-		const bad = [
-			{ source, start: 0, end: 50, text: 'x' },
-			{ source, start: -1, end: 1, text: '' },
-			{ start: 0, end: 1, text: 'x' },
-			{ source: null, start: 0, end: 1, text: 'x' },
-			{ source, start: 0, end: 1, text: null },
-			{ source, start: 0, end: 1, text: 5 },
-			{ source, start: 0, end: 1, text: 'x', name: null },
-			{ source, start: 0, end: 1, name: 5 },
-		] as unknown as TestPiece[];
+		const bad: TestPiece[] = [
+			{ source, start: 0, end: 50, data: 'range', text: 'x' },
+			{ source, start: -1, end: 1, data: 'range', text: '' },
+			{ source, start: 1.5, end: 2, data: 'range', text: 'x' },
+			{ source, start: 0, end: 4, data: 'range' },
+			{ source: otherSource, start: 2, end: 1, data: 'range' },
+		];
 		rewrite.insertBefore(1, 'X');
 		for (const range of bad) {
 			const problem = (() => {
@@ -771,7 +740,7 @@ describe('construction errors', () => {
 				}
 			})();
 			expect(problem).toBeDefined();
-			expect(() => rewrite.replace(1, 2, ['x', { ...range as object, data: 'range' } as TestPiece])).toThrow(
+			expect(() => rewrite.replace(1, 2, ['x', range])).toThrow(
 				`replace(1, 2, code): code[1], ${problem}`,
 			);
 		}
