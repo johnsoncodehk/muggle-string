@@ -253,6 +253,8 @@ type Piece<Origin = unknown> = string | (Origin & { start: number; end: number; 
 - Range without `text`: kept source text from `start` to `end`
 - Range with `text`: generated text that maps to the source range
 
+The library reads these field names: `start`, `end` and `text` on a range; `source` on a range from a rewrite or given to the source map renders, with `content` on the source object itself; `name` on a range with `text`, read only by the source map renders; and `placeholder` in the options of `cut`. Your own fields sit beside them on the same object, so give them other names. In the data you pass to `render` or `cut`, a field named `source`, `start` or `end` is replaced by the kept range's own, and a field named `text` turns kept text into that text instead of the source's. In `cut` options, `placeholder` is always the placeholder.
+
 ### Source maps
 
 - `renderWithSourceMap(render, sourceName)` — render and generate a v3 source map
